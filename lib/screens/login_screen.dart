@@ -59,7 +59,7 @@ class _LoginScreenState extends State<LoginScreen> {
                   ),
                   const SizedBox(height: 16),
                   const Text(
-                    'Barkod Tarayıcı',
+                    'ÇÇM-Barkod Okuyucu',
                     style: TextStyle(
                       color: AppColors.cream,
                       fontSize: 24,

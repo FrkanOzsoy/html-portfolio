@@ -17,7 +17,7 @@ class BarkodTarayiciApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Barkod Tarayıcı',
+      title: 'ÇÇM-Barkod Okuyucu',
       debugShowCheckedModeBanner: false,
       theme: buildAppTheme(),
       locale: const Locale('tr', 'TR'),

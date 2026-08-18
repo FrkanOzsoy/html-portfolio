@@ -7,7 +7,7 @@
 	<key>CFBundleDevelopmentRegion</key>
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
 	<key>CFBundleDisplayName</key>
-	<string>Barkod Tarayici</string>
+	<string>ÇÇM-Barkod Okuyucu</string>
 	<key>NSCameraUsageDescription</key>
 	<string>Ürün barkodlarını taramak için kameraya erişim gerekiyor.</string>
 	<key>CFBundleExecutable</key>
