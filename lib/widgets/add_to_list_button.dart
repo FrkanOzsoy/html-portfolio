@@ -1,0 +1,157 @@
+import 'package:flutter/material.dart';
+import '../data_repo.dart';
+import '../models.dart';
+import '../theme.dart';
+
+/// Single "Listeye Ekle" button, shared by the scanner and search screens.
+/// Tapping it opens a bottom-sheet list picker rather than showing an inline
+/// dropdown on every product card.
+class AddToListButton extends StatefulWidget {
+  final Product product;
+
+  const AddToListButton({super.key, required this.product});
+
+  @override
+  State<AddToListButton> createState() => _AddToListButtonState();
+}
+
+class _AddToListButtonState extends State<AddToListButton> {
+  final _repo = DataRepo();
+  bool _busy = false;
+
+  Future<void> _openPicker() async {
+    setState(() => _busy = true);
+    List<ProductList> lists;
+    try {
+      lists = await _repo.getLists();
+    } catch (_) {
+      lists = [];
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+
+    if (!mounted) return;
+
+    if (lists.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Henüz liste yok. Önce Listelerim sekmesinden bir liste oluşturun.'),
+        ),
+      );
+      return;
+    }
+
+    final selected = await showModalBottomSheet<ProductList>(
+      context: context,
+      backgroundColor: Colors.transparent,
+      isScrollControlled: true,
+      builder: (_) => _ListPickerSheet(lists: lists, productName: widget.product.stockname),
+    );
+    if (selected == null || !mounted) return;
+
+    try {
+      await _repo.addListItem(selected.id, widget.product.barcode);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('"${selected.name}" listesine eklendi.')),
+        );
+      }
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Eklenemedi, tekrar deneyin.')),
+        );
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      width: double.infinity,
+      child: ElevatedButton(
+        onPressed: _busy ? null : _openPicker,
+        style: ElevatedButton.styleFrom(backgroundColor: AppColors.brown800),
+        child: _busy
+            ? const SizedBox(
+                height: 16,
+                width: 16,
+                child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+              )
+            : const Text('Listeye Ekle'),
+      ),
+    );
+  }
+}
+
+class _ListPickerSheet extends StatelessWidget {
+  final List<ProductList> lists;
+  final String productName;
+
+  const _ListPickerSheet({required this.lists, required this.productName});
+
+  static const _typeAccent = {
+    ListKind.priceCheck: AppColors.terracotta,
+    ListKind.restock: AppColors.olive,
+    ListKind.priceChange: AppColors.mustard,
+    ListKind.custom: AppColors.brown500,
+  };
+
+  @override
+  Widget build(BuildContext context) {
+    return SafeArea(
+      child: Container(
+        decoration: const BoxDecoration(
+          color: AppColors.cream,
+          borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+        ),
+        constraints: BoxConstraints(maxHeight: MediaQuery.of(context).size.height * 0.7),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 20, 20, 8),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text('Listeye Ekle', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18, color: AppColors.brown900)),
+                  const SizedBox(height: 2),
+                  Text(productName, style: const TextStyle(color: AppColors.brown500), maxLines: 1, overflow: TextOverflow.ellipsis),
+                ],
+              ),
+            ),
+            const Divider(height: 1),
+            Flexible(
+              child: ListView.separated(
+                shrinkWrap: true,
+                padding: const EdgeInsets.symmetric(vertical: 8),
+                itemCount: lists.length,
+                separatorBuilder: (_, _) => const Divider(height: 1),
+                itemBuilder: (context, i) {
+                  final l = lists[i];
+                  return ListTile(
+                    title: Text(l.name, style: const TextStyle(fontWeight: FontWeight.w600, color: AppColors.brown900)),
+                    trailing: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                      decoration: BoxDecoration(
+                        color: _typeAccent[l.type]!.withValues(alpha: 0.15),
+                        borderRadius: BorderRadius.circular(999),
+                      ),
+                      child: Text(
+                        l.type.label,
+                        style: TextStyle(color: _typeAccent[l.type], fontWeight: FontWeight.w600, fontSize: 12),
+                      ),
+                    ),
+                    onTap: () => Navigator.of(context).pop(l),
+                  );
+                },
+              ),
+            ),
+            const SizedBox(height: 8),
+          ],
+        ),
+      ),
+    );
+  }
+}

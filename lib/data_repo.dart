@@ -68,6 +68,37 @@ class DataRepo {
 
   Future<void> deleteList(String id) => _client.from('lists').delete().eq('id', id);
 
+  Future<ProductList> getListById(String id) async {
+    final row = await _client
+        .from('lists')
+        .select('id, name, type, fields, created_at')
+        .eq('id', id)
+        .single();
+    return ProductList.fromJson(row);
+  }
+
+  /// Live-updating list of lists. Supabase's `.stream()` can't express the
+  /// `products(...)` join `getLists()`/`getListItems()` use, so this just
+  /// uses the raw realtime stream as a "something changed" signal and
+  /// re-runs the properly-joined query each time -- correct and simple,
+  /// at the cost of an extra round trip per change (fine at this scale).
+  Stream<List<ProductList>> watchLists() async* {
+    yield await getLists();
+    await for (final _ in _client.from('lists').stream(primaryKey: ['id'])) {
+      yield await getLists();
+    }
+  }
+
+  Stream<List<ListItem>> watchListItems(String listId) async* {
+    yield await getListItems(listId);
+    await for (final _ in _client
+        .from('list_items')
+        .stream(primaryKey: ['id'])
+        .eq('list_id', listId)) {
+      yield await getListItems(listId);
+    }
+  }
+
   static const _itemSelect =
       'id, list_id, barcode, quantity, new_price, note, custom_data, scanned_at, products(barcode, pluno, stockname, price, depno, stockunit)';
 

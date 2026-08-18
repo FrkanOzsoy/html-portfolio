@@ -3,7 +3,7 @@ import 'package:flutter/material.dart';
 import '../data_repo.dart';
 import '../models.dart';
 import '../theme.dart';
-import '../widgets/add_to_list_bar.dart';
+import '../widgets/add_to_list_button.dart';
 
 class SearchScreen extends StatefulWidget {
   const SearchScreen({super.key});
@@ -100,14 +100,35 @@ class _ResultCard extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(product.stockname, style: const TextStyle(fontWeight: FontWeight.bold, color: AppColors.brown900)),
-          const SizedBox(height: 2),
           Text(
-            '${product.barcode} · ${product.price ?? '-'} ₺ · ${product.stockunit ?? '-'}',
-            style: const TextStyle(color: AppColors.brown500, fontSize: 12),
+            product.stockname,
+            style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: AppColors.brown900),
           ),
-          const SizedBox(height: 8),
-          AddToListBar(product: product),
+          const SizedBox(height: 6),
+          SelectableText(
+            product.barcode,
+            style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600, color: AppColors.brown700),
+          ),
+          const SizedBox(height: 6),
+          Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                decoration: BoxDecoration(color: AppColors.brown100, borderRadius: BorderRadius.circular(8)),
+                child: Text(
+                  '${product.price ?? '-'} ₺',
+                  style: const TextStyle(fontSize: 15, fontWeight: FontWeight.bold, color: AppColors.brown800),
+                ),
+              ),
+              const SizedBox(width: 8),
+              Text(
+                product.stockunit ?? '-',
+                style: const TextStyle(fontSize: 14, color: AppColors.brown600),
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          AddToListButton(product: product),
         ],
       ),
     );

@@ -13,31 +13,23 @@ class ListsScreen extends StatefulWidget {
 
 class _ListsScreenState extends State<ListsScreen> {
   final _repo = DataRepo();
-  late Future<List<ProductList>> _future;
-
-  @override
-  void initState() {
-    super.initState();
-    _future = _repo.getLists();
-  }
-
-  void _refresh() => setState(() => _future = _repo.getLists());
+  late final Stream<List<ProductList>> _stream = _repo.watchLists();
 
   Future<void> _openNewListSheet() async {
-    final created = await showModalBottomSheet<bool>(
+    await showModalBottomSheet<bool>(
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
       builder: (_) => const _NewListSheet(),
     );
-    if (created == true) _refresh();
+    // No manual refresh needed -- the list stream picks up the new row
+    // via realtime as soon as it's inserted.
   }
 
-  Future<void> _openList(ProductList list) async {
-    await Navigator.of(context).push(
+  void _openList(ProductList list) {
+    Navigator.of(context).push(
       MaterialPageRoute(builder: (_) => ListDetailScreen(listId: list.id)),
     );
-    _refresh();
   }
 
   static const _typeAccent = {
@@ -66,8 +58,8 @@ class _ListsScreenState extends State<ListsScreen> {
             ),
             const SizedBox(height: 16),
             Expanded(
-              child: FutureBuilder<List<ProductList>>(
-                future: _future,
+              child: StreamBuilder<List<ProductList>>(
+                stream: _stream,
                 builder: (context, snapshot) {
                   if (!snapshot.hasData) {
                     return const Center(child: CircularProgressIndicator());

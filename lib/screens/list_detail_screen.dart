@@ -18,31 +18,22 @@ class ListDetailScreen extends StatefulWidget {
 class _ListDetailScreenState extends State<ListDetailScreen> {
   final _repo = DataRepo();
   ProductList? _list;
-  List<ListItem> _items = [];
-  bool _loading = true;
+  late final Stream<List<ListItem>> _itemsStream = _repo.watchListItems(widget.listId);
 
   @override
   void initState() {
     super.initState();
-    _load();
+    _loadListMeta();
   }
 
-  Future<void> _load() async {
-    setState(() => _loading = true);
-    final lists = await _repo.getLists();
-    final list = lists.firstWhere((l) => l.id == widget.listId);
-    final items = await _repo.getListItems(widget.listId);
-    if (!mounted) return;
-    setState(() {
-      _list = list;
-      _items = items;
-      _loading = false;
-    });
+  Future<void> _loadListMeta() async {
+    final list = await _repo.getListById(widget.listId);
+    if (mounted) setState(() => _list = list);
   }
 
   Future<void> _deleteItem(String itemId) async {
+    // No manual reload -- the items stream reflects the delete via realtime.
     await _repo.deleteListItem(itemId);
-    _load();
   }
 
   Future<void> _deleteList() async {
@@ -66,8 +57,10 @@ class _ListDetailScreenState extends State<ListDetailScreen> {
     }
   }
 
+  List<ListItem> _latestItems = [];
+
   Future<void> _exportCsv() async {
-    final csv = _repo.buildCsv(_list!, _items);
+    final csv = _repo.buildCsv(_list!, _latestItems);
     final dir = await getTemporaryDirectory();
     final safeName = _list!.name.replaceAll(RegExp(r'[^a-z0-9ığüşöç ]', caseSensitive: false), '_');
     final file = File('${dir.path}/$safeName.csv');
@@ -77,15 +70,16 @@ class _ListDetailScreenState extends State<ListDetailScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final list = _list;
     return Scaffold(
       appBar: AppBar(
-        title: Text(_list?.name ?? ''),
+        title: Text(list?.name ?? ''),
         actions: [
-          if (!_loading)
+          if (list != null)
             IconButton(icon: const Icon(Icons.ios_share), tooltip: 'CSV Paylaş', onPressed: _exportCsv),
         ],
       ),
-      body: _loading
+      body: list == null
           ? const Center(child: CircularProgressIndicator())
           : SafeArea(
               child: Padding(
@@ -93,27 +87,38 @@ class _ListDetailScreenState extends State<ListDetailScreen> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    Text(_list!.type.label, style: const TextStyle(color: AppColors.brown500)),
+                    Text(list.type.label, style: const TextStyle(color: AppColors.brown500)),
                     const SizedBox(height: 12),
                     Expanded(
-                      child: _items.isEmpty
-                          ? const Center(
+                      child: StreamBuilder<List<ListItem>>(
+                        stream: _itemsStream,
+                        builder: (context, snapshot) {
+                          if (!snapshot.hasData) {
+                            return const Center(child: CircularProgressIndicator());
+                          }
+                          final items = snapshot.data!;
+                          _latestItems = items;
+                          if (items.isEmpty) {
+                            return const Center(
                               child: Text(
                                 'Bu listede henüz ürün yok.\nTarayıcı veya Ürün Ara sekmesinden ekleyin.',
                                 textAlign: TextAlign.center,
                                 style: TextStyle(color: AppColors.brown500),
                               ),
-                            )
-                          : ListView.separated(
-                              itemCount: _items.length,
-                              separatorBuilder: (_, _) => const SizedBox(height: 10),
-                              itemBuilder: (context, i) => _ItemCard(
-                                item: _items[i],
-                                list: _list!,
-                                onDelete: () => _deleteItem(_items[i].id),
-                                onSaved: _load,
-                              ),
+                            );
+                          }
+                          return ListView.separated(
+                            itemCount: items.length,
+                            separatorBuilder: (_, _) => const SizedBox(height: 10),
+                            itemBuilder: (context, i) => _ItemCard(
+                              key: ValueKey(items[i].id),
+                              item: items[i],
+                              list: list,
+                              onDelete: () => _deleteItem(items[i].id),
                             ),
+                          );
+                        },
+                      ),
                     ),
                     const SizedBox(height: 12),
                     TextButton(
@@ -132,9 +137,8 @@ class _ItemCard extends StatefulWidget {
   final ListItem item;
   final ProductList list;
   final VoidCallback onDelete;
-  final VoidCallback onSaved;
 
-  const _ItemCard({required this.item, required this.list, required this.onDelete, required this.onSaved});
+  const _ItemCard({super.key, required this.item, required this.list, required this.onDelete});
 
   @override
   State<_ItemCard> createState() => _ItemCardState();
@@ -190,7 +194,11 @@ class _ItemCardState extends State<_ItemCard> {
             {for (final e in _customControllers.entries) e.key: e.value.text},
           );
       }
-      widget.onSaved();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Kaydedildi.'), duration: Duration(seconds: 1)),
+        );
+      }
     } finally {
       if (mounted) setState(() => _saving = false);
     }

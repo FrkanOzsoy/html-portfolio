@@ -4,7 +4,7 @@ import 'package:mobile_scanner/mobile_scanner.dart';
 import '../data_repo.dart';
 import '../models.dart';
 import '../theme.dart';
-import '../widgets/add_to_list_bar.dart';
+import '../widgets/add_to_list_button.dart';
 
 class ScannerScreen extends StatefulWidget {
   const ScannerScreen({super.key});
@@ -35,6 +35,7 @@ class _NotFound extends _LookupState {
 class _ScannerScreenState extends State<ScannerScreen> {
   final _repo = DataRepo();
   final _controller = MobileScannerController(
+    autoStart: false,
     formats: const [
       BarcodeFormat.ean13,
       BarcodeFormat.ean8,
@@ -46,6 +47,7 @@ class _ScannerScreenState extends State<ScannerScreen> {
     detectionSpeed: DetectionSpeed.noDuplicates,
   );
 
+  bool _cameraOn = false;
   _LookupState _lookup = _Idle();
   String? _lastBarcode;
   DateTime? _lastScanAt;
@@ -105,6 +107,16 @@ class _ScannerScreenState extends State<ScannerScreen> {
         if (mounted) setState(() => _manualLoading = false);
       }
     });
+  }
+
+  Future<void> _toggleCamera() async {
+    if (_cameraOn) {
+      await _controller.stop();
+      if (mounted) setState(() => _cameraOn = false);
+    } else {
+      setState(() => _cameraOn = true);
+      await _controller.start();
+    }
   }
 
   void _pickManualResult(Product product) {
@@ -178,55 +190,66 @@ class _ScannerScreenState extends State<ScannerScreen> {
               child: Container(
                 height: 320,
                 color: AppColors.brown950,
-                child: Stack(
-                  fit: StackFit.expand,
-                  children: [
-                    MobileScanner(
-                      controller: _controller,
-                      onDetect: (capture) {
-                        final value = capture.barcodes.firstOrNull?.rawValue;
-                        if (value != null) _handleScan(value);
-                      },
-                    ),
-                    Center(
-                      child: Container(
-                        width: 260,
-                        height: 110,
-                        decoration: BoxDecoration(
-                          border: Border.all(color: Colors.white70, width: 2),
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                      ),
-                    ),
-                    Positioned(
-                      top: 8,
-                      right: 8,
-                      child: ValueListenableBuilder(
-                        valueListenable: _controller,
-                        builder: (context, state, child) {
-                          if (!state.isInitialized || state.torchState == TorchState.unavailable) {
-                            return const SizedBox.shrink();
-                          }
-                          final on = state.torchState == TorchState.on;
-                          return CircleAvatar(
-                            backgroundColor: on ? AppColors.terracotta : Colors.black45,
-                            child: IconButton(
-                              icon: Icon(on ? Icons.flash_on : Icons.flash_off, color: Colors.white),
-                              onPressed: () => _controller.toggleTorch(),
+                child: _cameraOn
+                    ? Stack(
+                        fit: StackFit.expand,
+                        children: [
+                          MobileScanner(
+                            controller: _controller,
+                            onDetect: (capture) {
+                              final value = capture.barcodes.firstOrNull?.rawValue;
+                              if (value != null) _handleScan(value);
+                            },
+                          ),
+                          Center(
+                            child: Container(
+                              width: 260,
+                              height: 110,
+                              decoration: BoxDecoration(
+                                border: Border.all(color: Colors.white70, width: 2),
+                                borderRadius: BorderRadius.circular(12),
+                              ),
                             ),
-                          );
-                        },
+                          ),
+                          Positioned(
+                            top: 8,
+                            right: 8,
+                            child: ValueListenableBuilder(
+                              valueListenable: _controller,
+                              builder: (context, state, child) {
+                                if (!state.isInitialized || state.torchState == TorchState.unavailable) {
+                                  return const SizedBox.shrink();
+                                }
+                                final on = state.torchState == TorchState.on;
+                                return CircleAvatar(
+                                  backgroundColor: on ? AppColors.terracotta : Colors.black45,
+                                  child: IconButton(
+                                    icon: Icon(on ? Icons.flash_on : Icons.flash_off, color: Colors.white),
+                                    onPressed: () => _controller.toggleTorch(),
+                                  ),
+                                );
+                              },
+                            ),
+                          ),
+                        ],
+                      )
+                    : const Center(
+                        child: Text('Kamera kapalı', style: TextStyle(color: AppColors.brown400)),
                       ),
-                    ),
-                  ],
-                ),
               ),
             ),
             const SizedBox(height: 8),
-            const Text(
-              'Sadece çerçeve içindeki barkod okunur — ML Kit / Vision tabanlı yerel tarama.',
+            ElevatedButton(
+              onPressed: _toggleCamera,
+              child: Text(_cameraOn ? 'Kamerayı Durdur' : 'Kamerayı Başlat'),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              _cameraOn
+                  ? 'Sadece çerçeve içindeki barkod okunur — ML Kit / Vision tabanlı yerel tarama.'
+                  : 'Kamera kapalıyken de fiziksel barkod okuyucu veya elle arama ile tarama yapabilirsiniz.',
               textAlign: TextAlign.center,
-              style: TextStyle(color: AppColors.brown500, fontSize: 12),
+              style: const TextStyle(color: AppColors.brown500, fontSize: 12),
             ),
             const SizedBox(height: 16),
             Container(
@@ -284,7 +307,7 @@ class _ScannerScreenState extends State<ScannerScreen> {
           ],
         ),
         const SizedBox(height: 12),
-        AddToListBar(product: product),
+        AddToListButton(product: product),
       ],
     );
   }
