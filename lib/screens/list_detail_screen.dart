@@ -1,11 +1,8 @@
-import 'dart:convert';
-import 'dart:io';
 import 'package:flutter/material.dart';
-import 'package:path_provider/path_provider.dart';
-import 'package:share_plus/share_plus.dart';
 import '../data_repo.dart';
 import '../models.dart';
 import '../theme.dart';
+import '../widgets/export_sheet.dart';
 
 class ListDetailScreen extends StatefulWidget {
   final String listId;
@@ -59,14 +56,8 @@ class _ListDetailScreenState extends State<ListDetailScreen> {
 
   List<ListItem> _latestItems = [];
 
-  Future<void> _exportCsv() async {
-    final csv = _repo.buildCsv(_list!, _latestItems);
-    final dir = await getTemporaryDirectory();
-    final safeName = _list!.name.replaceAll(RegExp(r'[^a-z0-9ığüşöç ]', caseSensitive: false), '_');
-    final file = File('${dir.path}/$safeName.csv');
-    await file.writeAsBytes(utf8.encode(csv));
-    await SharePlus.instance.share(ShareParams(files: [XFile(file.path)], text: _list!.name));
-  }
+  Future<void> _openExportSheet() =>
+      showExportSheet(context, list: _list!, items: _latestItems);
 
   @override
   Widget build(BuildContext context) {
@@ -76,7 +67,7 @@ class _ListDetailScreenState extends State<ListDetailScreen> {
         title: Text(list?.name ?? ''),
         actions: [
           if (list != null)
-            IconButton(icon: const Icon(Icons.ios_share), tooltip: 'CSV Paylaş', onPressed: _exportCsv),
+            IconButton(icon: const Icon(Icons.ios_share), tooltip: 'Dışa Aktar', onPressed: _openExportSheet),
         ],
       ),
       body: list == null

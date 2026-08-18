@@ -137,44 +137,4 @@ class DataRepo {
 
   Future<void> deleteListItem(String itemId) =>
       _client.from('list_items').delete().eq('id', itemId);
-
-  /// Same shape as the old backend's /api/listelerim/[id]/csv route, built
-  /// client-side now that there's no server.
-  String buildCsv(ProductList list, List<ListItem> items) {
-    String esc(Object? v) {
-      final s = v?.toString() ?? '';
-      if (s.contains(RegExp(r'[",\n]'))) return '"${s.replaceAll('"', '""')}"';
-      return s;
-    }
-
-    final baseHeaders = ['Barkod', 'Ürün Adı', 'Fiyat', 'Birim'];
-    final List<String> extraHeaders = switch (list.type) {
-      ListKind.restock => ['Miktar'],
-      ListKind.priceChange => ['Yeni Fiyat'],
-      ListKind.priceCheck => ['Not'],
-      ListKind.custom => list.fields.map((f) => f.label).toList(),
-    };
-
-    final rows = items.map((item) {
-      final base = [
-        item.barcode,
-        item.product?.stockname ?? '',
-        item.product?.price ?? '',
-        item.product?.stockunit ?? '',
-      ];
-      final List<Object?> extra = switch (list.type) {
-        ListKind.restock => [item.quantity ?? ''],
-        ListKind.priceChange => [item.newPrice ?? ''],
-        ListKind.priceCheck => [item.note ?? ''],
-        ListKind.custom => list.fields.map((f) => item.customData[f.key] ?? '').toList(),
-      };
-      return [...base, ...extra];
-    });
-
-    final lines = [
-      [...baseHeaders, ...extraHeaders].map(esc).join(','),
-      ...rows.map((r) => r.map(esc).join(',')),
-    ];
-    return '﻿${lines.join('\r\n')}';
-  }
 }
