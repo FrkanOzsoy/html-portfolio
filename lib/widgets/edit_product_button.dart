@@ -33,10 +33,13 @@ class EditProductButton extends StatelessWidget {
               ),
       style: OutlinedButton.styleFrom(
         side: const BorderSide(color: AppColors.brown300, width: 2),
-        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 14),
+        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 14),
       ),
       icon: const Icon(Icons.edit_outlined, size: 18, color: AppColors.brown700),
-      label: const Text('Düzenle', style: TextStyle(color: AppColors.brown700), overflow: TextOverflow.ellipsis),
+      label: const FittedBox(
+        fit: BoxFit.scaleDown,
+        child: Text('Düzenle', style: TextStyle(color: AppColors.brown700)),
+      ),
     );
   }
 }

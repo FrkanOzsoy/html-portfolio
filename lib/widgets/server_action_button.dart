@@ -126,11 +126,13 @@ class _ServerActionButtonState extends State<ServerActionButton> with SingleTick
                           ),
                           const SizedBox(width: 8),
                           Flexible(
-                            child: Text(
-                              _phase == _Phase.success && widget.successLabel != null ? widget.successLabel! : widget.label,
-                              style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600, fontSize: 14),
-                              overflow: TextOverflow.ellipsis,
-                              textAlign: TextAlign.center,
+                            child: FittedBox(
+                              fit: BoxFit.scaleDown,
+                              child: Text(
+                                _phase == _Phase.success && widget.successLabel != null ? widget.successLabel! : widget.label,
+                                style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600, fontSize: 14),
+                                textAlign: TextAlign.center,
+                              ),
                             ),
                           ),
                         ],

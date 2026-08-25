@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'config.dart';
@@ -34,6 +36,7 @@ class UpdateChecker {
   /// null if up to date or the check couldn't complete (offline, till-side
   /// hiccup, etc. -- never blocks app startup on this).
   Future<ReleaseInfo?> checkForUpdate() async {
+    if (!Platform.isAndroid) return null;
     try {
       final row = await Supabase.instance.client
           .from('app_releases')

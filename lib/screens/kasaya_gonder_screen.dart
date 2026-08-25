@@ -472,24 +472,20 @@ class _TeraziyeItemState {
   final ListItem item;
   final TextEditingController nameController;
   final TextEditingController priceController;
-  final TextEditingController barcodeController;
-  final TextEditingController pluController;
-  bool selected = true;
 
   _TeraziyeItemState(this.item)
       : nameController = TextEditingController(text: item.product?.stockname ?? ''),
-        priceController = TextEditingController(text: item.product?.price?.toString() ?? ''),
-        barcodeController = TextEditingController(text: item.barcode),
-        // The scale's own PLU (list_items.custom_data.plu) -- sequential
-        // per list (MANAV and SARKUTERI each start their own numbering at
-        // 1), not Digisoft's general stock code (products.pluno).
-        pluController = TextEditingController(text: item.customData['plu']?.toString() ?? '');
+        priceController = TextEditingController(text: item.product?.price?.toString() ?? '');
+
+  // The scale's own PLU (list_items.custom_data.plu) -- sequential per list
+  // (MANAV and SARKUTERI each start their own numbering at 1), not
+  // Digisoft's general stock code (products.pluno). Read straight off the
+  // item since it's display-only here, not editable.
+  String? get plu => item.customData['plu']?.toString();
 
   void dispose() {
     nameController.dispose();
     priceController.dispose();
-    barcodeController.dispose();
-    pluController.dispose();
   }
 }
 
@@ -507,8 +503,7 @@ class _TeraziyeGonderTabState extends State<_TeraziyeGonderTab> {
   // Listelerim's own browsing -- see reservedTeraziyeListNames) -- not the
   // general list catalog, so staff can't accidentally send an unrelated
   // shopping list to the scale.
-  late final Future<List<ProductList>> _listsFuture =
-      _repo.getLists().then((lists) => lists.where((l) => reservedTeraziyeListNames.contains(l.name)).toList());
+  late final Future<List<ProductList>> _listsFuture = _repo.getReservedTeraziyeLists();
   String? _selectedListId;
   ProductList? _selectedList;
   List<ListItem> _items = [];
@@ -549,16 +544,14 @@ class _TeraziyeGonderTabState extends State<_TeraziyeGonderTab> {
   Future<int> _submit() async {
     final list = _selectedList;
     if (list == null) throw StateError('Liste seçilmedi');
-    final included = [
-      for (final item in _items)
-        if (_itemStates[item.id]?.selected ?? false) item,
-    ];
+    // No per-item selection any more -- the whole list goes, every time
+    // (see the removed Checkbox in _TeraziyeItemCard).
 
     if (_mode == _TeraziyeMode.kasaVeTerazi) {
       // Only name/price are things Digisoft's side actually supports
       // editing right now -- barcode has no field-update path server-side
       // yet, so it only ever reaches the scale export below.
-      for (final item in included) {
+      for (final item in _items) {
         final st = _itemStates[item.id]!;
         final product = item.product;
         if (product == null) continue;
@@ -574,14 +567,12 @@ class _TeraziyeGonderTabState extends State<_TeraziyeGonderTab> {
     }
 
     final payload = [
-      for (final item in included)
+      for (final item in _items)
         {
-          'barcode': _itemStates[item.id]!.barcodeController.text.trim(),
+          'barcode': item.barcode,
           'stockname': _itemStates[item.id]!.nameController.text.trim(),
           'price': num.tryParse(_itemStates[item.id]!.priceController.text.trim().replaceAll(',', '.')),
-          'pluno': _itemStates[item.id]!.pluController.text.trim().isEmpty
-              ? null
-              : _itemStates[item.id]!.pluController.text.trim(),
+          'pluno': _itemStates[item.id]!.plu,
         },
     ];
     return _repo.requestEslExport(listName: list.name, items: payload);
@@ -589,10 +580,12 @@ class _TeraziyeGonderTabState extends State<_TeraziyeGonderTab> {
 
   @override
   Widget build(BuildContext context) {
-    final anySelected = _items.any((i) => _itemStates[i.id]?.selected ?? false);
-    return SingleChildScrollView(
-      padding: const EdgeInsets.all(16),
-      child: Column(
+    return Column(
+      children: [
+        Expanded(
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+            child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           const SyncHealthBanner(),
@@ -694,20 +687,33 @@ class _TeraziyeGonderTabState extends State<_TeraziyeGonderTab> {
             )
           else
             for (final item in _items)
-              if (_itemStates[item.id] != null)
-                _TeraziyeItemCard(state: _itemStates[item.id]!, onSelectionChanged: () => setState(() {})),
-          if (_items.isNotEmpty) ...[
-            const SizedBox(height: 8),
-            QueuedActionButton(
-              icon: _mode == _TeraziyeMode.kasaVeTerazi ? Icons.point_of_sale : Icons.monitor_weight_outlined,
-              label: _mode == _TeraziyeMode.kasaVeTerazi ? 'Kasa ve Teraziye Gönder' : 'Teraziye Gönder',
-              enabled: _teraziyeSendingEnabled && anySelected,
-              onSubmit: _submit,
-              watchStatus: _repo.watchEslExportStatus,
-            ),
-          ],
+              if (_itemStates[item.id] != null) _TeraziyeItemCard(state: _itemStates[item.id]!),
         ],
-      ),
+            ),
+          ),
+        ),
+        // Pinned outside the ScrollView so it's always reachable without
+        // scrolling down through however many items the list has -- the
+        // whole reason the item cards above were shrunk down to name+price.
+        if (_items.isNotEmpty)
+          Container(
+            padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
+            decoration: BoxDecoration(
+              color: AppColors.cream,
+              border: Border(top: BorderSide(color: AppColors.creamBorder)),
+            ),
+            child: SafeArea(
+              top: false,
+              child: QueuedActionButton(
+                icon: _mode == _TeraziyeMode.kasaVeTerazi ? Icons.point_of_sale : Icons.monitor_weight_outlined,
+                label: _mode == _TeraziyeMode.kasaVeTerazi ? 'Kasa ve Teraziye Gönder' : 'Teraziye Gönder',
+                enabled: _teraziyeSendingEnabled,
+                onSubmit: _submit,
+                watchStatus: _repo.watchEslExportStatus,
+              ),
+            ),
+          ),
+      ],
     );
   }
 }
@@ -760,80 +766,53 @@ class _ModeButton extends StatelessWidget {
   }
 }
 
-class _TeraziyeItemCard extends StatefulWidget {
+// Whole list always goes -- no per-item send/skip choice any more -- and
+// only name/price are editable here (barcode and PLU are fixed identifiers,
+// not something staff should be retyping on the way to the scale). Shown
+// as plain text instead of TextFields, which is also what shrinks the
+// card down to a size where "Teraziye Gönder" doesn't take a screenful of
+// scrolling to reach.
+class _TeraziyeItemCard extends StatelessWidget {
   final _TeraziyeItemState state;
-  final VoidCallback onSelectionChanged;
 
-  const _TeraziyeItemCard({required this.state, required this.onSelectionChanged});
+  const _TeraziyeItemCard({required this.state});
 
-  @override
-  State<_TeraziyeItemCard> createState() => _TeraziyeItemCardState();
-}
-
-class _TeraziyeItemCardState extends State<_TeraziyeItemCard> {
   @override
   Widget build(BuildContext context) {
-    final st = widget.state;
+    final plu = state.plu;
     return Container(
-      margin: const EdgeInsets.only(bottom: 8),
-      padding: const EdgeInsets.all(14),
+      margin: const EdgeInsets.only(bottom: 6),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
       decoration: BoxDecoration(
         color: AppColors.creamCard,
         borderRadius: BorderRadius.circular(AppRadius.box),
-        border: Border.all(color: st.selected ? AppColors.terracotta : AppColors.creamBorder, width: st.selected ? 2 : 1),
+        border: Border.all(color: AppColors.creamBorder),
       ),
       child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
+        crossAxisAlignment: CrossAxisAlignment.center,
         children: [
-          Checkbox(
-            value: st.selected,
-            activeColor: AppColors.terracotta,
-            onChanged: (v) {
-              setState(() => st.selected = v ?? false);
-              widget.onSelectionChanged();
-            },
-          ),
           Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                TextField(
-                  controller: st.nameController,
-                  style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: AppColors.brown900),
-                  decoration: const InputDecoration(labelText: 'İsim', isDense: true),
-                ),
-                const SizedBox(height: 8),
-                Row(
-                  children: [
-                    Expanded(
-                      flex: 3,
-                      child: TextField(
-                        controller: st.barcodeController,
-                        style: const TextStyle(fontSize: 13),
-                        decoration: const InputDecoration(labelText: 'Barkod', isDense: true),
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      flex: 2,
-                      child: TextField(
-                        controller: st.priceController,
-                        keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                        style: const TextStyle(fontSize: 13),
-                        decoration: const InputDecoration(labelText: 'Fiyat', isDense: true),
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 8),
-                TextField(
-                  controller: st.pluController,
-                  style: const TextStyle(fontSize: 13),
-                  decoration: const InputDecoration(labelText: 'PLU No', isDense: true),
-                ),
-              ],
+            flex: 3,
+            child: TextField(
+              controller: state.nameController,
+              style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14, color: AppColors.brown900),
+              decoration: const InputDecoration(labelText: 'İsim', isDense: true),
             ),
           ),
+          const SizedBox(width: 8),
+          SizedBox(
+            width: 90,
+            child: TextField(
+              controller: state.priceController,
+              keyboardType: const TextInputType.numberWithOptions(decimal: true),
+              style: const TextStyle(fontSize: 13),
+              decoration: const InputDecoration(labelText: 'Fiyat', isDense: true),
+            ),
+          ),
+          if (plu != null && plu.isNotEmpty) ...[
+            const SizedBox(width: 8),
+            Text('PLU $plu', style: const TextStyle(fontSize: 11, color: AppColors.brown400)),
+          ],
         ],
       ),
     );

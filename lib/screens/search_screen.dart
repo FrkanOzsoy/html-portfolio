@@ -959,7 +959,7 @@ class _ResultCard extends StatelessWidget {
           const SizedBox(height: 10),
           Row(
             children: [
-              Expanded(flex: 2, child: AddToListButton(product: product)),
+              Expanded(child: AddToListButton(product: product)),
               const SizedBox(width: 8),
               Expanded(child: EditProductButton(product: product)),
               const SizedBox(width: 8),

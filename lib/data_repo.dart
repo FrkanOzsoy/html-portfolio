@@ -154,6 +154,7 @@ class DataRepo {
         .from('products')
         .select('barcode, pluno, stockname, price, depno, stockunit, search_key, kdv_rate')
         .or(filters.join(','))
+        .order('stockname')
         .limit(200)
         .timeout(const Duration(seconds: 5));
     final products = rows.map((r) => Product.fromJson(r)).toList();
@@ -359,9 +360,24 @@ class DataRepo {
   // raced a query once. A transient failure now degrades to "no data yet"
   // instead, and the next `_localDb.changes` ping (there's always another
   // along shortly) retries.
+  // Excludes the two Teraziye-only lists (MANAV/SARKUTERI) -- those are
+  // real rows in `lists` but are only ever meant to be worked with from
+  // the Teraziye Gönder tab (see kasaya_gonder_screen.dart's own
+  // getReservedTeraziyeLists), not browsed/picked from Listelerim, Ürün
+  // Ara's "Listeye Ekle", or any other list picker.
   Future<List<ProductList>> getLists() async {
     try {
-      return await _localDb.getLists();
+      final lists = await _localDb.getLists();
+      return lists.where((l) => !reservedTeraziyeListNames.contains(l.name)).toList();
+    } catch (_) {
+      return [];
+    }
+  }
+
+  Future<List<ProductList>> getReservedTeraziyeLists() async {
+    try {
+      final lists = await _localDb.getLists();
+      return lists.where((l) => reservedTeraziyeListNames.contains(l.name)).toList();
     } catch (_) {
       return [];
     }

@@ -135,7 +135,8 @@ class _ListPickerSheetState extends State<_ListPickerSheet> {
                 child: TextField(
                   controller: _noteController,
                   decoration: const InputDecoration(labelText: 'Not (opsiyonel)', isDense: true),
-                  maxLines: 2,
+                  textInputAction: TextInputAction.done,
+                  onSubmitted: (_) => FocusScope.of(context).unfocus(),
                 ),
               ),
               const SizedBox(height: 8),
