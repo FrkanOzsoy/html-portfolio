@@ -72,14 +72,20 @@ class _AddToListButtonState extends State<AddToListButton> {
       width: double.infinity,
       child: ElevatedButton(
         onPressed: _busy ? null : _openPicker,
-        style: ElevatedButton.styleFrom(backgroundColor: AppColors.brown800),
+        style: ElevatedButton.styleFrom(
+          backgroundColor: AppColors.brown800,
+          padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 14),
+        ),
         child: _busy
             ? const SizedBox(
                 height: 16,
                 width: 16,
                 child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
               )
-            : const Text('Listeye Ekle'),
+            : const FittedBox(
+                fit: BoxFit.scaleDown,
+                child: Text('Listeye Ekle', maxLines: 1),
+              ),
       ),
     );
   }

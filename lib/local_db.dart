@@ -301,7 +301,7 @@ class LocalDb {
 
   Future<void> mergeRemoteLists(List<ProductList> remoteLists) async {
     final db = await _d;
-    final protectedIds = await _protectedIds({'create_list', 'delete_list'});
+    final protectedIds = await _protectedIds({'create_list', 'delete_list', 'update_list'});
     await db.transaction((txn) async {
       for (final list in remoteLists) {
         if (protectedIds.contains(list.id)) continue;

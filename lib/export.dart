@@ -17,8 +17,8 @@ class ExportColumn {
 /// UI already edits per type, plus the base product columns every list has.
 List<ExportColumn> exportColumnsFor(ProductList list) {
   final columns = <ExportColumn>[
-    ExportColumn(key: 'barcode', label: 'Barkod', getValue: (i) => i.barcode),
     ExportColumn(key: 'name', label: 'Ürün Adı', getValue: (i) => i.product?.stockname ?? ''),
+    ExportColumn(key: 'barcode', label: 'Barkod', getValue: (i) => i.barcode),
     ExportColumn(key: 'price', label: 'Fiyat', getValue: (i) => formatPrice(i.product?.price)),
     ExportColumn(key: 'unit', label: 'Birim', getValue: (i) => i.product?.stockunit ?? ''),
   ];
@@ -31,10 +31,21 @@ List<ExportColumn> exportColumnsFor(ProductList list) {
     case ListKind.priceCheck:
       columns.add(ExportColumn(key: 'note', label: 'Not', getValue: (i) => i.note ?? ''));
     case ListKind.custom:
-      for (final f in list.fields) {
-        columns.add(
-          ExportColumn(key: 'custom_${f.key}', label: f.label, getValue: (i) => i.customData[f.key]?.toString() ?? ''),
-        );
+      // name/barcode/price are already unconditional base columns above --
+      // a custom list's `fields` are just tick boxes for which of those
+      // (plus kdv) to show on-screen (see list_detail_screen.dart's
+      // _visibleStandardFields), not extra data to export. KDV is the only
+      // one of the four not already a base column.
+      if (list.fields.any((f) => f.key == 'kdv')) {
+        columns.add(ExportColumn(
+          key: 'kdv',
+          label: 'KDV',
+          getValue: (i) {
+            final rate = i.product?.kdvRate;
+            if (rate == null) return '';
+            return '%${rate.toStringAsFixed(rate % 1 == 0 ? 0 : 2)}';
+          },
+        ));
       }
   }
   return columns;

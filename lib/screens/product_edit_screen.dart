@@ -45,6 +45,10 @@ class _ProductEditScreenState extends State<ProductEditScreen> {
   // Pre-fills from whatever's already staged (from a previous visit, or
   // staged by someone else on another device), so reopening this screen
   // shows the pending values rather than silently reverting to Digisoft's.
+  // If nothing's staged for the KDV department, falls back to whichever
+  // department matches the product's own synced kdv_rate (see
+  // matchKdvDepartmentByRate) so the dropdown opens on the product's
+  // actual current KDV instead of blank.
   Future<void> _loadStaged() async {
     final changes = await _repo.getPendingChangesForBarcode(widget.product.barcode);
     for (final c in changes) {
@@ -56,6 +60,11 @@ class _ProductEditScreenState extends State<ProductEditScreen> {
         case 'kasadepid':
           _selectedDepartment = int.tryParse(c.newValue);
       }
+    }
+    if (_selectedDepartment == null) {
+      final departments = await _departmentsFuture;
+      final match = matchKdvDepartmentByRate(widget.product.kdvRate, departments);
+      if (match != null) _selectedDepartment = match.kasadepid;
     }
     if (mounted) setState(() {});
   }
@@ -132,6 +141,13 @@ class _ProductEditScreenState extends State<ProductEditScreen> {
                 p.barcode,
                 style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: AppColors.brown600),
               ),
+              if (p.kdvRate != null) ...[
+                const SizedBox(height: 4),
+                Text(
+                  'Mevcut KDV: %${p.kdvRate!.toStringAsFixed(p.kdvRate! % 1 == 0 ? 0 : 2)}',
+                  style: const TextStyle(fontSize: 13, color: AppColors.brown500),
+                ),
+              ],
               const SizedBox(height: 16),
               TextField(
                 controller: _priceController,

@@ -72,6 +72,25 @@ class _ListDetailScreenState extends State<ListDetailScreen> {
   Future<void> _openExportSheet() =>
       showExportSheet(context, list: _list!, items: _latestItems);
 
+  // Lets a list's info fields be changed after creation instead of only at
+  // creation time -- only meaningful for a plain (ListKind.custom) list,
+  // since that's the only kind whose per-item form is driven by `fields`
+  // at all (see _ItemCard.build's `if (widget.list.type == ListKind.custom)`
+  // branch); the older built-in list kinds keep their fixed Miktar/Yeni
+  // Fiyat/Not field regardless.
+  Future<void> _editFields() async {
+    final list = _list!;
+    final fields = await showModalBottomSheet<List<CustomField>>(
+      context: context,
+      backgroundColor: Colors.transparent,
+      isScrollControlled: true,
+      builder: (_) => _EditFieldsSheet(initialFields: list.fields),
+    );
+    if (fields == null || !mounted) return;
+    await _repo.updateListFields(list.id, fields);
+    await _loadListMeta();
+  }
+
   @override
   Widget build(BuildContext context) {
     final list = _list;
@@ -80,6 +99,8 @@ class _ListDetailScreenState extends State<ListDetailScreen> {
         title: Text(list?.name ?? '', overflow: TextOverflow.ellipsis, maxLines: 1),
         actions: [
           if (list != null) ...[
+            if (list.type == ListKind.custom)
+              IconButton(icon: const Icon(Icons.tune), tooltip: 'Alanları Düzenle', onPressed: _editFields),
             IconButton(icon: const Icon(Icons.ios_share), tooltip: 'Dışa Aktar', onPressed: _openExportSheet),
             Padding(
               padding: const EdgeInsets.only(right: 12),
@@ -96,8 +117,42 @@ class _ListDetailScreenState extends State<ListDetailScreen> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    Text(list.type.label, style: const TextStyle(color: AppColors.brown500)),
-                    const SizedBox(height: 12),
+                    // Only the older built-in list kinds still have a
+                    // meaningful type name to show -- a plain (custom) list
+                    // has no "type" any more from the user's side, just
+                    // whatever fields it was given (see _editFields).
+                    if (list.type != ListKind.custom) ...[
+                      Text(list.type.label, style: const TextStyle(color: AppColors.brown500)),
+                      const SizedBox(height: 12),
+                    ] else ...[
+                      // Right in the list itself, not just tucked behind the
+                      // app bar's tune icon -- shows what's currently picked
+                      // and doubles as the entry point to change it.
+                      InkWell(
+                        borderRadius: BorderRadius.circular(AppRadius.chip),
+                        onTap: _editFields,
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(vertical: 4),
+                          child: Row(
+                            children: [
+                              const Icon(Icons.tune, size: 15, color: AppColors.brown500),
+                              const SizedBox(width: 4),
+                              Expanded(
+                                child: Text(
+                                  list.fields.isEmpty
+                                      ? 'Gösterilecek bilgi seçilmedi -- düzenlemek için dokunun'
+                                      : 'Gösterilen: ${list.fields.map((f) => f.label).join(', ')}',
+                                  style: const TextStyle(color: AppColors.brown500, fontSize: 12.5),
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                              ),
+                              const Icon(Icons.chevron_right, size: 16, color: AppColors.brown400),
+                            ],
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                    ],
                     Expanded(
                       child: StreamBuilder<List<ListItem>>(
                         stream: _itemsStream,
@@ -142,30 +197,26 @@ class _ListDetailScreenState extends State<ListDetailScreen> {
   }
 }
 
-/// Top-bar "Sil" action for the whole list -- same compact solid-terracotta
-/// box-with-label style as the product editor's delete button, for one
-/// consistent "delete X" look across the app.
+/// Top-bar delete action for the whole list -- icon-only now (was
+/// icon+"Sil" label) so it doesn't crowd out the other app bar actions
+/// (Alanları Düzenle, Dışa Aktar) on narrower phones.
 class _DeleteListButton extends StatelessWidget {
   final VoidCallback onPressed;
   const _DeleteListButton({required this.onPressed});
 
   @override
   Widget build(BuildContext context) {
-    return Material(
-      color: AppColors.terracotta,
-      borderRadius: BorderRadius.circular(AppRadius.chip),
-      child: InkWell(
+    return Tooltip(
+      message: 'Listeyi Sil',
+      child: Material(
+        color: AppColors.terracotta,
         borderRadius: BorderRadius.circular(AppRadius.chip),
-        onTap: onPressed,
-        child: const Padding(
-          padding: EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(Icons.delete_outline, size: 16, color: Colors.white),
-              SizedBox(width: 4),
-              Text('Sil', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w600, fontSize: 13)),
-            ],
+        child: InkWell(
+          borderRadius: BorderRadius.circular(AppRadius.chip),
+          onTap: onPressed,
+          child: const Padding(
+            padding: EdgeInsets.all(8),
+            child: Icon(Icons.delete_outline, size: 20, color: Colors.white),
           ),
         ),
       ),
@@ -187,10 +238,16 @@ class _ItemCard extends StatefulWidget {
 class _ItemCardState extends State<_ItemCard> {
   final _repo = DataRepo();
   late final TextEditingController _fieldController;
-  late final Map<String, TextEditingController> _customControllers;
   StreamSubscription<List<PendingChange>>? _pendingSub;
   List<PendingChange> _pending = [];
   late bool _noteEditing;
+
+  // A plain (ListKind.custom) list's `fields` are now just a set of tick
+  // boxes for which of the product's own name/barcode/price/kdv to show --
+  // no per-item typed data any more (see _buildProductInfo).
+  Set<String> get _visibleStandardFields => widget.list.type == ListKind.custom
+      ? widget.list.fields.map((f) => f.key).toSet()
+      : standardListFieldKeys.toSet();
 
   @override
   void initState() {
@@ -204,10 +261,6 @@ class _ItemCardState extends State<_ItemCard> {
       },
     );
     _noteEditing = (widget.item.note ?? '').trim().isNotEmpty;
-    _customControllers = {
-      for (final f in widget.list.fields)
-        f.key: TextEditingController(text: widget.item.customData[f.key]?.toString() ?? ''),
-    };
     _pendingSub = _repo.watchPendingChangesForBarcode(widget.item.barcode).listen((changes) {
       if (mounted) setState(() => _pending = changes);
     });
@@ -216,9 +269,6 @@ class _ItemCardState extends State<_ItemCard> {
   @override
   void dispose() {
     _fieldController.dispose();
-    for (final c in _customControllers.values) {
-      c.dispose();
-    }
     _pendingSub?.cancel();
     super.dispose();
   }
@@ -250,10 +300,7 @@ class _ItemCardState extends State<_ItemCard> {
         case ListKind.priceCheck:
           await _repo.updateItemNote(widget.item.id, _fieldController.text);
         case ListKind.custom:
-          await _repo.updateItemCustomData(
-            widget.item.id,
-            {for (final e in _customControllers.entries) e.key: e.value.text},
-          );
+          break; // nothing to save -- fields here are display-only tick boxes now
       }
       await _repo.logAction('urun_guncellendi', detail: widget.item.barcode);
       // Collapse the note back to display mode after a successful save --
@@ -314,40 +361,48 @@ class _ItemCardState extends State<_ItemCard> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(
-                      widget.item.product?.stockname ?? 'Ürün bulunamadı',
-                      style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 18, color: AppColors.brown900),
-                    ),
-                    const SizedBox(height: 4),
-                    SelectableText(
-                      widget.item.barcode,
-                      style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600, color: AppColors.brown600),
-                    ),
-                    const SizedBox(height: 4),
-                    Wrap(
-                      spacing: 6,
-                      children: [
-                        Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                          decoration: BoxDecoration(
-                              color: AppColors.brown100, borderRadius: BorderRadius.circular(AppRadius.chip)),
-                          child: Text(
-                            formatPrice(widget.item.product?.price),
-                            style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: AppColors.brown800),
-                          ),
-                        ),
-                        if (_kdvLabel != null)
-                          Container(
-                            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                            decoration: BoxDecoration(
-                                color: AppColors.brown100, borderRadius: BorderRadius.circular(AppRadius.chip)),
-                            child: Text(
-                              _kdvLabel!,
-                              style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: AppColors.brown600),
+                    if (_visibleStandardFields.contains('name')) ...[
+                      Text(
+                        widget.item.product?.stockname ?? 'Ürün bulunamadı',
+                        style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 18, color: AppColors.brown900),
+                      ),
+                      const SizedBox(height: 4),
+                    ],
+                    if (_visibleStandardFields.contains('barcode')) ...[
+                      SelectableText(
+                        widget.item.barcode,
+                        style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600, color: AppColors.brown600),
+                      ),
+                      const SizedBox(height: 4),
+                    ],
+                    if (_visibleStandardFields.contains('price') ||
+                        (_visibleStandardFields.contains('kdv') && _kdvLabel != null))
+                      Wrap(
+                        spacing: 6,
+                        children: [
+                          if (_visibleStandardFields.contains('price'))
+                            Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                              decoration: BoxDecoration(
+                                  color: AppColors.brown100, borderRadius: BorderRadius.circular(AppRadius.chip)),
+                              child: Text(
+                                formatPrice(widget.item.product?.price),
+                                style:
+                                    const TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: AppColors.brown800),
+                              ),
                             ),
-                          ),
-                      ],
-                    ),
+                          if (_visibleStandardFields.contains('kdv') && _kdvLabel != null)
+                            Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                              decoration: BoxDecoration(
+                                  color: AppColors.brown100, borderRadius: BorderRadius.circular(AppRadius.chip)),
+                              child: Text(
+                                _kdvLabel!,
+                                style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: AppColors.brown600),
+                              ),
+                            ),
+                        ],
+                      ),
                   ],
                 ),
               ),
@@ -389,26 +444,10 @@ class _ItemCardState extends State<_ItemCard> {
               ),
             ),
           const SizedBox(height: 8),
-          if (widget.list.type == ListKind.custom) ...[
-            Wrap(
-              spacing: 8,
-              runSpacing: 8,
-              children: [
-                for (final f in widget.list.fields)
-                  SizedBox(
-                    width: 140,
-                    child: TextField(
-                      controller: _customControllers[f.key],
-                      keyboardType: f.inputType == 'number' ? TextInputType.number : TextInputType.text,
-                      textInputAction: TextInputAction.done,
-                      onSubmitted: (_) => _save(),
-                      decoration: InputDecoration(labelText: f.label, isDense: true),
-                    ),
-                  ),
-              ],
-            ),
-            const SizedBox(height: 8),
-          ] else if (isPriceCheck) ...[
+          // A plain (custom) list has no editable field here at all any
+          // more -- its `fields` just toggle which of the product's own
+          // attributes show above (see _visibleStandardFields).
+          if (isPriceCheck) ...[
             if (_noteEditing)
               TextField(
                 controller: _fieldController,
@@ -451,7 +490,7 @@ class _ItemCardState extends State<_ItemCard> {
                 ),
               ),
             const SizedBox(height: 8),
-          ] else ...[
+          ] else if (widget.list.type != ListKind.custom) ...[
             TextField(
               controller: _fieldController,
               keyboardType: isNumeric ? const TextInputType.numberWithOptions(decimal: true) : TextInputType.text,
@@ -531,6 +570,76 @@ class _ItemCardState extends State<_ItemCard> {
             size: 28,
           ),
         ],
+      ),
+    );
+  }
+}
+
+/// Same tick-box shape as _NewListSheet in lists_screen.dart, just
+/// pre-filled from a list's existing selection and returning the edited
+/// set instead of creating a new list.
+class _EditFieldsSheet extends StatefulWidget {
+  final List<CustomField> initialFields;
+  const _EditFieldsSheet({required this.initialFields});
+
+  @override
+  State<_EditFieldsSheet> createState() => _EditFieldsSheetState();
+}
+
+class _EditFieldsSheetState extends State<_EditFieldsSheet> {
+  late final Set<String> _selectedFields = {
+    for (final f in widget.initialFields)
+      if (standardListFieldKeys.contains(f.key)) f.key,
+  };
+
+  void _submit() {
+    final fields = [
+      for (final key in standardListFieldKeys)
+        if (_selectedFields.contains(key))
+          CustomField(key: key, label: standardListFieldLabels[key]!, inputType: 'text'),
+    ];
+    Navigator.of(context).pop(fields);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom),
+      child: Container(
+        decoration: const BoxDecoration(
+          color: AppColors.cream,
+          borderRadius: BorderRadius.vertical(top: Radius.circular(AppRadius.sheet)),
+        ),
+        padding: const EdgeInsets.all(20),
+        child: SingleChildScrollView(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Text('Ürünlerde Gösterilecek Bilgiler',
+                  style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18, color: AppColors.brown900)),
+              const SizedBox(height: 12),
+              for (final key in standardListFieldKeys)
+                CheckboxListTile(
+                  value: _selectedFields.contains(key),
+                  onChanged: (v) => setState(() {
+                    if (v ?? false) {
+                      _selectedFields.add(key);
+                    } else {
+                      _selectedFields.remove(key);
+                    }
+                  }),
+                  controlAffinity: ListTileControlAffinity.leading,
+                  contentPadding: EdgeInsets.zero,
+                  dense: true,
+                  title: Text(standardListFieldLabels[key]!),
+                ),
+              const SizedBox(height: 12),
+              ElevatedButton(onPressed: _submit, child: const Text('Kaydet')),
+              const SizedBox(height: 12),
+            ],
+          ),
+        ),
       ),
     );
   }

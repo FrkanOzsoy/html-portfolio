@@ -278,6 +278,8 @@ class SyncEngine {
         });
       case 'delete_list':
         await _client.from('lists').delete().eq('id', payload['id']);
+      case 'update_list':
+        await _client.from('lists').update({'fields': payload['fields']}).eq('id', payload['id']);
       case 'add_item':
         // quantity/new_price/custom_data/scanned_at are only ever present
         // when this op came from restoreListItem (undoing a delete) -- a

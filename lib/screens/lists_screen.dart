@@ -124,51 +124,16 @@ class _ListCard extends StatelessWidget {
           borderRadius: BorderRadius.circular(AppRadius.box),
           border: Border.all(color: AppColors.creamBorder),
         ),
+        // No more "list type" chip -- lists aren't typed any more, just
+        // named, so the name is all this row needs to show.
         child: desktop
-            ? Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  Text(
-                    list.name,
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 17, color: AppColors.brown900),
-                  ),
-                  Align(
-                    alignment: Alignment.centerLeft,
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                      decoration: BoxDecoration(
-                        color: list.type.accentColor.withValues(alpha: 0.15),
-                        borderRadius: BorderRadius.circular(AppRadius.chip),
-                      ),
-                      child: Text(
-                        list.type.label,
-                        style: TextStyle(color: list.type.accentColor, fontWeight: FontWeight.w600, fontSize: 13),
-                      ),
-                    ),
-                  ),
-                ],
+            ? Text(
+                list.name,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 17, color: AppColors.brown900),
               )
-            : Row(
-                children: [
-                  Expanded(
-                    child: Text(list.name, style: const TextStyle(fontWeight: FontWeight.bold, color: AppColors.brown900)),
-                  ),
-                  Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                    decoration: BoxDecoration(
-                      color: list.type.accentColor.withValues(alpha: 0.15),
-                      borderRadius: BorderRadius.circular(AppRadius.chip),
-                    ),
-                    child: Text(
-                      list.type.label,
-                      style: TextStyle(color: list.type.accentColor, fontWeight: FontWeight.w600, fontSize: 12),
-                    ),
-                  ),
-                ],
-              ),
+            : Text(list.name, style: const TextStyle(fontWeight: FontWeight.bold, color: AppColors.brown900)),
       ),
     );
   }
@@ -184,28 +149,13 @@ class _NewListSheet extends StatefulWidget {
 class _NewListSheetState extends State<_NewListSheet> {
   final _repo = DataRepo();
   final _nameController = TextEditingController();
-  ListKind _type = ListKind.priceCheck;
-  final List<TextEditingController> _fieldLabelControllers = [TextEditingController()];
-  final List<String> _fieldTypes = ['text'];
+  final Set<String> _selectedFields = {...defaultStandardListFieldKeys};
   bool _saving = false;
 
   @override
   void dispose() {
     _nameController.dispose();
-    for (final c in _fieldLabelControllers) {
-      c.dispose();
-    }
     super.dispose();
-  }
-
-  String _slugify(String label, int i) {
-    const foldMap = {'ı': 'i', 'ğ': 'g', 'ü': 'u', 'ş': 's', 'ö': 'o', 'ç': 'c'};
-    final ascii = label
-        .toLowerCase()
-        .replaceAllMapped(RegExp(r'[ığüşöç]'), (m) => foldMap[m.group(0)]!)
-        .replaceAll(RegExp(r'[^a-z0-9]+'), '_')
-        .replaceAll(RegExp(r'^_+|_+$'), '');
-    return ascii.isEmpty ? 'alan_${i + 1}' : ascii;
   }
 
   Future<void> _submit() async {
@@ -214,19 +164,18 @@ class _NewListSheetState extends State<_NewListSheet> {
 
     setState(() => _saving = true);
     try {
-      final fields = _type == ListKind.custom
-          ? [
-              for (var i = 0; i < _fieldLabelControllers.length; i++)
-                if (_fieldLabelControllers[i].text.trim().isNotEmpty)
-                  CustomField(
-                    key: _slugify(_fieldLabelControllers[i].text.trim(), i),
-                    label: _fieldLabelControllers[i].text.trim(),
-                    inputType: _fieldTypes[i],
-                  ),
-            ]
-          : <CustomField>[];
+      final fields = [
+        for (final key in standardListFieldKeys)
+          if (_selectedFields.contains(key))
+            CustomField(key: key, label: standardListFieldLabels[key]!, inputType: 'text'),
+      ];
 
-      await _repo.createList(name, _type, fields);
+      // Every new list is just a plain list now -- no more picking a
+      // "type" up front (Fiyat Kontrol/Stok Yenileme/...), just which of
+      // the product's own fields show on each card, which is also
+      // editable later from the list itself (see ListDetailScreen's
+      // field-editor action).
+      await _repo.createList(name, ListKind.custom, fields);
       if (mounted) Navigator.of(context).pop(true);
     } catch (_) {
       if (mounted) {
@@ -260,50 +209,37 @@ class _NewListSheetState extends State<_NewListSheet> {
                 controller: _nameController,
                 decoration: const InputDecoration(labelText: 'Liste Adı', hintText: 'Örn: Hafta sonu fiyat kontrolü'),
               ),
-              const SizedBox(height: 12),
-              DropdownButtonFormField<ListKind>(
-                initialValue: _type,
-                decoration: const InputDecoration(labelText: 'Liste Türü'),
-                items: ListKind.values
-                    .map((t) => DropdownMenuItem(value: t, child: Text(t.label)))
-                    .toList(),
-                onChanged: (v) => setState(() => _type = v ?? ListKind.priceCheck),
-              ),
-              if (_type == ListKind.custom) ...[
-                const SizedBox(height: 12),
-                const Align(alignment: Alignment.centerLeft, child: Text('Özel Alanlar', style: TextStyle(fontWeight: FontWeight.w600))),
-                for (var i = 0; i < _fieldLabelControllers.length; i++)
-                  Padding(
-                    padding: const EdgeInsets.only(top: 8),
-                    child: Row(
-                      children: [
-                        Expanded(
-                          child: TextField(
-                            controller: _fieldLabelControllers[i],
-                            decoration: const InputDecoration(hintText: 'Alan adı (örn: Not)', isDense: true),
-                          ),
-                        ),
-                        const SizedBox(width: 8),
-                        DropdownButton<String>(
-                          value: _fieldTypes[i],
-                          items: const [
-                            DropdownMenuItem(value: 'text', child: Text('Metin')),
-                            DropdownMenuItem(value: 'number', child: Text('Sayı')),
-                          ],
-                          onChanged: (v) => setState(() => _fieldTypes[i] = v ?? 'text'),
-                        ),
-                      ],
-                    ),
-                  ),
-                TextButton(
-                  onPressed: () => setState(() {
-                    _fieldLabelControllers.add(TextEditingController());
-                    _fieldTypes.add('text');
-                  }),
-                  child: const Text('+ Alan Ekle'),
-                ),
-              ],
               const SizedBox(height: 16),
+              const Align(
+                alignment: Alignment.centerLeft,
+                child: Text('Ürünlerde Gösterilecek Bilgiler', style: TextStyle(fontWeight: FontWeight.w600)),
+              ),
+              const Align(
+                alignment: Alignment.centerLeft,
+                child: Padding(
+                  padding: EdgeInsets.only(top: 2, bottom: 4),
+                  child: Text(
+                    'Bu listedeki her üründe hangi bilgiler görünsün. Sonradan da değiştirebilirsiniz.',
+                    style: TextStyle(fontSize: 12, color: AppColors.brown500),
+                  ),
+                ),
+              ),
+              for (final key in standardListFieldKeys)
+                CheckboxListTile(
+                  value: _selectedFields.contains(key),
+                  onChanged: (v) => setState(() {
+                    if (v ?? false) {
+                      _selectedFields.add(key);
+                    } else {
+                      _selectedFields.remove(key);
+                    }
+                  }),
+                  controlAffinity: ListTileControlAffinity.leading,
+                  contentPadding: EdgeInsets.zero,
+                  dense: true,
+                  title: Text(standardListFieldLabels[key]!),
+                ),
+              const SizedBox(height: 8),
               ElevatedButton(
                 onPressed: _saving ? null : _submit,
                 child: _saving

@@ -406,6 +406,23 @@ class DataRepo {
     return list;
   }
 
+  /// Lets a list's info fields (what shows on each product card in it) be
+  /// changed after creation -- creation no longer asks for a list "type",
+  /// just these fields, so getting them wrong isn't a one-shot mistake any
+  /// more.
+  Future<void> updateListFields(String id, List<CustomField> fields) async {
+    final list = await getListById(id);
+    if (list == null) return;
+    final updated = ProductList(id: list.id, name: list.name, type: list.type, fields: fields, createdAt: list.createdAt);
+    await _localDb.upsertListLocal(updated);
+    await _localDb.enqueueOp('update_list', {
+      'id': id,
+      'fields': fields.map((f) => f.toJson()).toList(),
+    });
+    unawaited(SyncEngine.instance.pushNow());
+    unawaited(logAction('liste_alanlari_guncellendi', detail: list.name));
+  }
+
   Future<void> deleteList(String id) async {
     await _localDb.hardDeleteListAndItems(id);
     await _localDb.enqueueOp('delete_list', {'id': id});
@@ -479,9 +496,6 @@ class DataRepo {
   Future<void> updateItemNewPrice(String itemId, num? newPrice) => _updateItemField(itemId, 'new_price', newPrice);
 
   Future<void> updateItemNote(String itemId, String? note) => _updateItemField(itemId, 'note', note);
-
-  Future<void> updateItemCustomData(String itemId, Map<String, dynamic> customData) =>
-      _updateItemField(itemId, 'custom_data', customData);
 
   Future<void> _updateItemField(String itemId, String field, dynamic value) async {
     await _localDb.updateItemFieldLocal(itemId, field, value);

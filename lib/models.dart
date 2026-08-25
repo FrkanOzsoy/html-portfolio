@@ -117,6 +117,21 @@ class CustomField {
   Map<String, dynamic> toJson() => {'key': key, 'label': label, 'input_type': inputType};
 }
 
+/// A plain (ListKind.custom) list no longer collects arbitrary user-typed
+/// fields -- it's just a set of tick boxes for which of the product's own
+/// existing attributes to show on that list's item cards. Reuses
+/// ProductList.fields/CustomField as storage (one CustomField per checked
+/// box, keyed by one of these) purely to avoid a schema change; inputType
+/// on those entries is unused.
+const standardListFieldKeys = ['name', 'barcode', 'price', 'kdv'];
+const standardListFieldLabels = {
+  'name': 'İsim',
+  'barcode': 'Barkod',
+  'price': 'Fiyat',
+  'kdv': 'KDV',
+};
+const defaultStandardListFieldKeys = {'name', 'price', 'barcode'};
+
 class ProductList {
   final String id;
   final String name;

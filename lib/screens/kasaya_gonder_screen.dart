@@ -155,14 +155,14 @@ class _KasayaGonderScreenState extends State<KasayaGonderScreen> with SingleTick
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('Seçilenleri İptal Et'),
-        content: Text('${toRevoke.length} bekleyen değişiklik iptal edilecek. Emin misiniz?'),
+        title: const Text('Seçili Değişiklikleri Kaldır'),
+        content: Text('${toRevoke.length} bekleyen değişiklik kaldırılacak. Emin misiniz?'),
         actions: [
           TextButton(onPressed: () => Navigator.of(context).pop(false), child: const Text('Vazgeç')),
           ElevatedButton(
             onPressed: () => Navigator.of(context).pop(true),
             style: ElevatedButton.styleFrom(backgroundColor: AppColors.terracotta),
-            child: const Text('İptal Et'),
+            child: const Text('Kaldır'),
           ),
         ],
       ),
@@ -174,7 +174,7 @@ class _KasayaGonderScreenState extends State<KasayaGonderScreen> with SingleTick
     if (mounted) {
       setState(() => _selectedIds.clear());
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('${toRevoke.length} değişiklik iptal edildi.')),
+        SnackBar(content: Text('${toRevoke.length} değişiklik kaldırıldı.')),
       );
     }
   }
@@ -331,50 +331,71 @@ class _KasayaGonderScreenState extends State<KasayaGonderScreen> with SingleTick
                             style: const TextStyle(color: AppColors.brown500, fontSize: 13),
                           ),
                         ),
-                        Material(
-                          color: AppColors.brown100,
-                          borderRadius: BorderRadius.circular(AppRadius.box),
-                          child: InkWell(
-                            borderRadius: BorderRadius.circular(AppRadius.box),
-                            onTap: selectableChanges.isEmpty
-                                ? null
-                                : () => setState(() {
-                                      final allSelected = selectableChanges.every((c) => _selectedIds.contains(c.id));
-                                      if (allSelected) {
-                                        _selectedIds.removeAll(selectableChanges.map((c) => c.id));
-                                      } else {
-                                        _selectedIds.addAll(selectableChanges.map((c) => c.id));
-                                      }
-                                    }),
-                            child: Container(
-                              width: double.infinity,
-                              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-                              decoration: BoxDecoration(
-                                border: Border.all(color: AppColors.brown300, width: 2),
+                        Row(
+                          children: [
+                            Expanded(
+                              child: Material(
+                                color: AppColors.brown100,
                                 borderRadius: BorderRadius.circular(AppRadius.box),
-                              ),
-                              child: Row(
-                                mainAxisAlignment: MainAxisAlignment.center,
-                                children: [
-                                  Icon(
-                                    selectableChanges.isNotEmpty && selectableChanges.every((c) => _selectedIds.contains(c.id))
-                                        ? Icons.check_box
-                                        : Icons.check_box_outline_blank,
-                                    size: 18,
-                                    color: AppColors.brown700,
+                                child: InkWell(
+                                  borderRadius: BorderRadius.circular(AppRadius.box),
+                                  onTap: selectableChanges.isEmpty
+                                      ? null
+                                      : () => setState(() {
+                                            final allSelected =
+                                                selectableChanges.every((c) => _selectedIds.contains(c.id));
+                                            if (allSelected) {
+                                              _selectedIds.removeAll(selectableChanges.map((c) => c.id));
+                                            } else {
+                                              _selectedIds.addAll(selectableChanges.map((c) => c.id));
+                                            }
+                                          }),
+                                  child: Container(
+                                    width: double.infinity,
+                                    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                                    decoration: BoxDecoration(
+                                      border: Border.all(color: AppColors.brown300, width: 2),
+                                      borderRadius: BorderRadius.circular(AppRadius.box),
+                                    ),
+                                    child: Row(
+                                      mainAxisAlignment: MainAxisAlignment.center,
+                                      children: [
+                                        Icon(
+                                          selectableChanges.isNotEmpty &&
+                                                  selectableChanges.every((c) => _selectedIds.contains(c.id))
+                                              ? Icons.check_box
+                                              : Icons.check_box_outline_blank,
+                                          size: 18,
+                                          color: AppColors.brown700,
+                                        ),
+                                        const SizedBox(width: 8),
+                                        Text(
+                                          selectableChanges.isNotEmpty &&
+                                                  selectableChanges.every((c) => _selectedIds.contains(c.id))
+                                              ? 'Seçimi Kaldır'
+                                              : 'Tümünü Seç',
+                                          style: const TextStyle(
+                                              color: AppColors.brown700, fontWeight: FontWeight.w700, fontSize: 14),
+                                        ),
+                                      ],
+                                    ),
                                   ),
-                                  const SizedBox(width: 8),
-                                  Text(
-                                    selectableChanges.isNotEmpty && selectableChanges.every((c) => _selectedIds.contains(c.id))
-                                        ? 'Seçimi Kaldır'
-                                        : 'Tümünü Seç',
-                                    style: const TextStyle(
-                                        color: AppColors.brown700, fontWeight: FontWeight.w700, fontSize: 14),
-                                  ),
-                                ],
+                                ),
                               ),
                             ),
-                          ),
+                            const SizedBox(width: 8),
+                            // Right beside "Tümünü Seç" instead of a full-width
+                            // button buried below the send buttons -- discards
+                            // the *selected* pending changes without sending
+                            // them (per-item X/swipe still does one at a time).
+                            SquareIconButton(
+                              icon: Icons.playlist_remove,
+                              color: AppColors.terracotta,
+                              tooltip: 'Seçili değişiklikleri kaldır',
+                              size: 44,
+                              onPressed: !_sending && _selectedIds.isNotEmpty ? _revokeSelected : null,
+                            ),
+                          ],
                         ),
                         for (final group in groupEntries) ...[
                           Padding(
@@ -442,19 +463,6 @@ class _KasayaGonderScreenState extends State<KasayaGonderScreen> with SingleTick
                   ),
                 ),
               ],
-            ),
-            const SizedBox(height: 8),
-            OutlinedButton.icon(
-              onPressed: !_sending && _selectedIds.isNotEmpty ? _revokeSelected : null,
-              style: OutlinedButton.styleFrom(
-                side: const BorderSide(color: AppColors.terracotta, width: 2),
-                padding: const EdgeInsets.symmetric(vertical: 12),
-              ),
-              icon: const Icon(Icons.cancel_outlined, size: 18, color: AppColors.terracotta),
-              label: Text(
-                'Seçilenleri İptal Et${_selectedIds.isEmpty ? '' : ' (${_selectedIds.length})'}',
-                style: const TextStyle(color: AppColors.terracotta, fontWeight: FontWeight.w600),
-              ),
             ),
           ],
         ),
@@ -941,7 +949,7 @@ class _PendingChangeCard extends StatelessWidget {
           SquareIconButton(
             icon: Icons.close,
             color: AppColors.terracotta,
-            tooltip: 'Öneriyi İptal Et',
+            tooltip: 'Değişikliği Kaldır',
             onPressed: onRevoke,
           ),
         ],
