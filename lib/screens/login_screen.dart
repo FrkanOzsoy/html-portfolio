@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import '../data_repo.dart';
 import '../theme.dart';
@@ -24,6 +25,21 @@ class _LoginScreenState extends State<LoginScreen> {
     try {
       await _repo.signIn(_passwordController.text);
       if (!mounted) return;
+
+      final existingName = await _repo.getStaffName();
+      if (existingName == null) {
+        final name = await _promptForName();
+        if (name == null) {
+          // User backed out of the name prompt -- stay on the login screen
+          // rather than entering the app with no identity for chat/logs.
+          await _repo.signOut();
+          return;
+        }
+        await _repo.setStaffName(name);
+      }
+
+      unawaited(_repo.logAction('giris_yapildi'));
+      if (!mounted) return;
       Navigator.of(context).pushReplacement(
         MaterialPageRoute(builder: (_) => const HomeShell()),
       );
@@ -32,6 +48,38 @@ class _LoginScreenState extends State<LoginScreen> {
     } finally {
       if (mounted) setState(() => _loading = false);
     }
+  }
+
+  /// First login only: staff pick a display name, used for in-app messaging
+  /// and the server-side activity log. Not cancelable by tapping outside --
+  /// only the explicit "Vazgeç" button backs out (and signs back out).
+  Future<String?> _promptForName() async {
+    final controller = TextEditingController();
+    return showDialog<String>(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => AlertDialog(
+        title: const Text('İsminiz'),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          decoration: const InputDecoration(hintText: 'Örn: Ahmet'),
+          onSubmitted: (v) {
+            if (v.trim().isNotEmpty) Navigator.of(context).pop(v.trim());
+          },
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.of(context).pop(null), child: const Text('Vazgeç')),
+          TextButton(
+            onPressed: () {
+              final v = controller.text.trim();
+              if (v.isNotEmpty) Navigator.of(context).pop(v);
+            },
+            child: const Text('Devam'),
+          ),
+        ],
+      ),
+    );
   }
 
   @override
@@ -52,7 +100,7 @@ class _LoginScreenState extends State<LoginScreen> {
                     height: 56,
                     decoration: BoxDecoration(
                       color: AppColors.terracotta.withValues(alpha: 0.2),
-                      borderRadius: BorderRadius.circular(16),
+                      borderRadius: BorderRadius.circular(AppRadius.box),
                       border: Border.all(color: AppColors.terracotta.withValues(alpha: 0.4)),
                     ),
                     child: const Center(child: Text('📦', style: TextStyle(fontSize: 24))),
@@ -71,7 +119,7 @@ class _LoginScreenState extends State<LoginScreen> {
                     padding: const EdgeInsets.all(24),
                     decoration: BoxDecoration(
                       color: AppColors.brown900.withValues(alpha: 0.6),
-                      borderRadius: BorderRadius.circular(16),
+                      borderRadius: BorderRadius.circular(AppRadius.box),
                       border: Border.all(color: AppColors.brown700),
                     ),
                     child: Column(
@@ -82,7 +130,7 @@ class _LoginScreenState extends State<LoginScreen> {
                             padding: const EdgeInsets.all(12),
                             decoration: BoxDecoration(
                               color: AppColors.terracotta.withValues(alpha: 0.9),
-                              borderRadius: BorderRadius.circular(12),
+                              borderRadius: BorderRadius.circular(AppRadius.box),
                             ),
                             child: Text(_error!, style: const TextStyle(color: Colors.white)),
                           ),
@@ -100,11 +148,11 @@ class _LoginScreenState extends State<LoginScreen> {
                             filled: true,
                             fillColor: AppColors.brown950.withValues(alpha: 0.6),
                             enabledBorder: OutlineInputBorder(
-                              borderRadius: BorderRadius.circular(12),
+                              borderRadius: BorderRadius.circular(AppRadius.box),
                               borderSide: const BorderSide(color: AppColors.brown700),
                             ),
                             focusedBorder: OutlineInputBorder(
-                              borderRadius: BorderRadius.circular(12),
+                              borderRadius: BorderRadius.circular(AppRadius.box),
                               borderSide: const BorderSide(color: AppColors.terracotta, width: 2),
                             ),
                           ),

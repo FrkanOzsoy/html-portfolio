@@ -1,0 +1,1159 @@
+import 'dart:async';
+import 'package:flutter/material.dart';
+import '../data_repo.dart';
+import '../format.dart';
+import '../models.dart';
+import '../theme.dart';
+import '../widgets/queued_action_button.dart';
+import '../widgets/server_action_button.dart';
+import '../widgets/square_icon_button.dart';
+import '../widgets/swipe_bounce_dismiss.dart';
+import '../widgets/sync_health_banner.dart';
+import '../widgets/tab_keep_alive.dart';
+
+/// MANAV/SARKUTERI's item-to-PLU assignment was originally auto-classified
+/// by product name and turned out wrong -- sending was disabled until the
+/// correct list was uploaded from the till-PC side. That's now done (till-PC
+/// session replaced both lists with real store data, confirmed 2026-08-23),
+/// so sending is back on.
+const _teraziyeSendingEnabled = true;
+
+String _fieldLabel(String field) => switch (field) {
+      'price' => 'Fiyat',
+      'stockname' => 'İsim',
+      'stockunit' => 'Birim',
+      'depno' => 'Grup',
+      _ => field,
+    };
+
+String _formatValue(String field, String? value) =>
+    field == 'price' ? formatPrice(value == null ? null : num.tryParse(value)) : (value ?? '-');
+
+/// The field's actual current value on the (locally cached, but
+/// realtime-synced) product row -- null for a field this app doesn't mirror
+/// onto [Product] locally (e.g. 'kasadepid', which only exists on the
+/// till-PC side), meaning no double-check is possible for it.
+String? _currentValueFor(PendingChange c) => switch (c.field) {
+      'price' => c.product?.price?.toString(),
+      'stockname' => c.product?.stockname,
+      'stockunit' => c.product?.stockunit,
+      'depno' => c.product?.depno,
+      _ => null,
+    };
+
+/// True when the product's current value already matches what's staged --
+/// almost always because someone already sent this exact change from
+/// another device (or another staff member's session) and this staged row
+/// itself just hasn't been cleared yet, rather than because it still
+/// genuinely needs sending. See _PendingChangeCard's warning below.
+bool _alreadyApplied(PendingChange c) {
+  if (c.product == null) return false;
+  if (c.field == 'price') {
+    final staged = num.tryParse(c.newValue.replaceAll(',', '.'));
+    return staged != null && c.product!.price == staged;
+  }
+  final current = _currentValueFor(c);
+  return current != null && current == c.newValue;
+}
+
+String _formatTime(DateTime dt) {
+  final local = dt.toLocal();
+  return '${local.day.toString().padLeft(2, '0')}.${local.month.toString().padLeft(2, '0')} '
+      '${local.hour.toString().padLeft(2, '0')}:${local.minute.toString().padLeft(2, '0')}';
+}
+
+String _formatFullDateTime(DateTime dt) {
+  final local = dt.toLocal();
+  return '${local.day.toString().padLeft(2, '0')}.${local.month.toString().padLeft(2, '0')}.${local.year} '
+      '${local.hour.toString().padLeft(2, '0')}:${local.minute.toString().padLeft(2, '0')}';
+}
+
+/// Review every staged product edit -- proposed from a list item's pencil
+/// icon or directly from "Ürün Ara" -- in one place, pick which ones to
+/// actually commit, and send just those through the real Digisoft/kasa
+/// pipeline (optionally also queuing an Argox label print). Nothing here
+/// reaches the till until one of the send buttons is pressed. The bottom
+/// "Eski Gönderilenler" section shows what's already been sent and whether
+/// the till-PC service confirmed it landed.
+class KasayaGonderScreen extends StatefulWidget {
+  const KasayaGonderScreen({super.key});
+
+  @override
+  State<KasayaGonderScreen> createState() => _KasayaGonderScreenState();
+}
+
+class _KasayaGonderScreenState extends State<KasayaGonderScreen> with SingleTickerProviderStateMixin {
+  final _repo = DataRepo();
+  List<PendingChange> _latestChanges = [];
+  final Set<String> _selectedIds = {};
+  bool _sending = false;
+  List<SentChangeRecord> _history = [];
+  bool _historyLoading = true;
+  late final TabController _tabController = TabController(length: 2, vsync: this);
+  // Cached once, not re-created every build() -- unlike every other screen's
+  // stream field, this used to call _repo.watchAllPendingChanges() fresh
+  // inline in the StreamBuilder, which meant switching tabs and back (any
+  // rebuild of this State) tore down and re-subscribed a brand new stream
+  // each time, instead of reusing the same live one.
+  late final Stream<List<PendingChange>> _pendingChangesStream = _repo.watchAllPendingChanges();
+  // Whoever set their name on *this* device (see DataRepo.getStaffName) --
+  // there's no real per-user auth (one shared staff account), so "current
+  // user" just means "matches this device's own self-reported name". Used
+  // to sort that group to the bottom, separate from everyone else's.
+  String? _currentStaffName;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadHistory();
+    _repo.getStaffName().then((name) {
+      if (mounted) setState(() => _currentStaffName = name);
+    });
+  }
+
+  @override
+  void dispose() {
+    _tabController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _loadHistory() async {
+    setState(() => _historyLoading = true);
+    final history = await _repo.getRecentSentChanges();
+    if (mounted) {
+      setState(() {
+        _history = history;
+        _historyLoading = false;
+      });
+    }
+  }
+
+  void _toggleSelect(String id, bool selected) {
+    setState(() {
+      if (selected) {
+        _selectedIds.add(id);
+      } else {
+        _selectedIds.remove(id);
+      }
+    });
+  }
+
+  Future<void> _revoke(PendingChange change) async {
+    setState(() => _selectedIds.remove(change.id));
+    await _repo.unstageChange(change.id);
+  }
+
+  // Bulk counterpart to the single swipe-to-revoke on each card -- for
+  // clearing out a batch of stale/wrong proposals (e.g. someone staged a
+  // pile of changes from the wrong list) without swiping them away one at
+  // a time. Confirmed first since, unlike a single swipe (already a
+  // deliberate gesture), a misclick here could wipe out several people's
+  // staged work at once.
+  Future<void> _revokeSelected() async {
+    final toRevoke = _latestChanges.where((c) => _selectedIds.contains(c.id)).toList();
+    if (toRevoke.isEmpty) return;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Seçilenleri İptal Et'),
+        content: Text('${toRevoke.length} bekleyen değişiklik iptal edilecek. Emin misiniz?'),
+        actions: [
+          TextButton(onPressed: () => Navigator.of(context).pop(false), child: const Text('Vazgeç')),
+          ElevatedButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            style: ElevatedButton.styleFrom(backgroundColor: AppColors.terracotta),
+            child: const Text('İptal Et'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+    for (final c in toRevoke) {
+      await _repo.unstageChange(c.id);
+    }
+    if (mounted) {
+      setState(() => _selectedIds.clear());
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('${toRevoke.length} değişiklik iptal edildi.')),
+      );
+    }
+  }
+
+  Future<bool> _sendSelected({required bool alsoPrintLabel}) async {
+    // Defense in depth -- the checkbox is already disabled for a conflicted
+    // barcode, but a selection made *before* a second person's conflicting
+    // change landed could still be sitting in _selectedIds when this fires.
+    final requestersByBarcode = <String, Set<String>>{};
+    for (final c in _latestChanges) {
+      requestersByBarcode.putIfAbsent(c.barcode, () => {}).add(c.requestedBy ?? 'Bilinmeyen Kullanıcı');
+    }
+    final selected = _latestChanges
+        .where((c) => _selectedIds.contains(c.id) && (requestersByBarcode[c.barcode]?.length ?? 1) <= 1)
+        .toList();
+    if (selected.isEmpty) return false;
+
+    setState(() => _sending = true);
+    var successCount = 0;
+    final errors = <String>[];
+    for (final change in selected) {
+      final err = await _repo.sendPendingChange(change, alsoPrintLabel: alsoPrintLabel);
+      if (err == null) {
+        successCount++;
+      } else {
+        errors.add('${change.product?.stockname ?? change.barcode} (${_fieldLabel(change.field)})');
+      }
+    }
+    if (mounted) {
+      setState(() {
+        _sending = false;
+        _selectedIds.clear();
+      });
+      final message = errors.isEmpty
+          ? '$successCount değişiklik gönderildi.${alsoPrintLabel ? ' Etiketler yazdırılıyor.' : ''}'
+          : '$successCount gönderildi, ${errors.length} hata: ${errors.join(', ')}';
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
+      unawaited(_loadHistory());
+    }
+    return errors.isEmpty;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return SafeArea(
+      child: Column(
+        children: [
+          TabBar(
+            controller: _tabController,
+            labelColor: AppColors.terracotta,
+            unselectedLabelColor: AppColors.brown500,
+            indicatorColor: AppColors.terracotta,
+            tabs: const [
+              Tab(icon: Icon(Icons.point_of_sale_outlined), text: 'Kasaya Gönder'),
+              Tab(icon: Icon(Icons.monitor_weight_outlined), text: 'Teraziye Gönder'),
+            ],
+          ),
+          Expanded(
+            child: TabBarView(
+              controller: _tabController,
+              // Swiping here would fight the app-wide swipe-to-switch-tabs
+              // gesture on the main shell (home_shell.dart) -- this inner
+              // view only changes tab via the TabBar itself.
+              physics: const NeverScrollableScrollPhysics(),
+              children: [
+                TabKeepAlive(child: _buildKasayaTab()),
+                const TabKeepAlive(child: _TeraziyeGonderTab()),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildKasayaTab() {
+    return Padding(
+      padding: const EdgeInsets.all(16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          const SyncHealthBanner(),
+            const SizedBox(height: 12),
+            Expanded(
+              child: StreamBuilder<List<PendingChange>>(
+                stream: _pendingChangesStream,
+                builder: (context, snapshot) {
+                  final changes = snapshot.data ?? [];
+                  _latestChanges = changes;
+                  _selectedIds.retainAll(changes.map((c) => c.id));
+
+                  // A barcode with pending changes from more than one
+                  // distinct requester (any field, not just the same one --
+                  // the deterministic barcode:field id already silently
+                  // merges same-field collisions into one overwritten row,
+                  // so this is specifically the case that id scheme can't
+                  // catch: two different people mid-editing the same
+                  // product at once) is unsafe to send blind -- flagged and
+                  // blocked from selection until someone reverts theirs.
+                  final requestersByBarcode = <String, Set<String>>{};
+                  for (final c in changes) {
+                    requestersByBarcode.putIfAbsent(c.barcode, () => {}).add(c.requestedBy ?? 'Bilinmeyen Kullanıcı');
+                  }
+                  final conflictedBarcodes = {
+                    for (final e in requestersByBarcode.entries)
+                      if (e.value.length > 1) e.key,
+                  };
+                  final selectableChanges = changes.where((c) => !conflictedBarcodes.contains(c.barcode)).toList();
+
+                  // Grouped by who staged it (not by list, like before) --
+                  // this is a shared, global staging area (every device
+                  // sees every change), so it's easy to mistake someone
+                  // else's proposal for your own or vice versa. Other
+                  // people's groups sort first (most recently active
+                  // first), this device's own group always sorts last.
+                  final grouped = <String, List<PendingChange>>{};
+                  for (final c in changes) {
+                    grouped.putIfAbsent(c.requestedBy ?? 'Bilinmeyen Kullanıcı', () => []).add(c);
+                  }
+                  DateTime mostRecent(List<PendingChange> group) =>
+                      group.map((c) => c.createdAt).reduce((a, b) => a.isAfter(b) ? a : b);
+                  final groupEntries = grouped.entries.toList()
+                    ..sort((a, b) {
+                      final aIsMe = a.key == _currentStaffName;
+                      final bIsMe = b.key == _currentStaffName;
+                      if (aIsMe != bIsMe) return aIsMe ? 1 : -1;
+                      return mostRecent(b.value).compareTo(mostRecent(a.value));
+                    });
+
+                  return ListView(
+                    children: [
+                      if (!snapshot.hasData)
+                        const Padding(
+                          padding: EdgeInsets.symmetric(vertical: 24),
+                          child: Center(child: CircularProgressIndicator()),
+                        )
+                      else if (changes.isEmpty)
+                        const Padding(
+                          padding: EdgeInsets.symmetric(vertical: 24),
+                          child: Center(
+                            child: Text(
+                              'Gönderilecek bekleyen değişiklik yok.\n\n'
+                              'Bir üründe kalem simgesinden yeni isim/fiyat önerebilirsiniz.',
+                              textAlign: TextAlign.center,
+                              style: TextStyle(color: AppColors.brown500),
+                            ),
+                          ),
+                        )
+                      else ...[
+                        Padding(
+                          padding: const EdgeInsets.only(bottom: 4),
+                          child: Text(
+                            '${changes.length} bekleyen değişiklik',
+                            style: const TextStyle(color: AppColors.brown500, fontSize: 13),
+                          ),
+                        ),
+                        Material(
+                          color: AppColors.brown100,
+                          borderRadius: BorderRadius.circular(AppRadius.box),
+                          child: InkWell(
+                            borderRadius: BorderRadius.circular(AppRadius.box),
+                            onTap: selectableChanges.isEmpty
+                                ? null
+                                : () => setState(() {
+                                      final allSelected = selectableChanges.every((c) => _selectedIds.contains(c.id));
+                                      if (allSelected) {
+                                        _selectedIds.removeAll(selectableChanges.map((c) => c.id));
+                                      } else {
+                                        _selectedIds.addAll(selectableChanges.map((c) => c.id));
+                                      }
+                                    }),
+                            child: Container(
+                              width: double.infinity,
+                              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                              decoration: BoxDecoration(
+                                border: Border.all(color: AppColors.brown300, width: 2),
+                                borderRadius: BorderRadius.circular(AppRadius.box),
+                              ),
+                              child: Row(
+                                mainAxisAlignment: MainAxisAlignment.center,
+                                children: [
+                                  Icon(
+                                    selectableChanges.isNotEmpty && selectableChanges.every((c) => _selectedIds.contains(c.id))
+                                        ? Icons.check_box
+                                        : Icons.check_box_outline_blank,
+                                    size: 18,
+                                    color: AppColors.brown700,
+                                  ),
+                                  const SizedBox(width: 8),
+                                  Text(
+                                    selectableChanges.isNotEmpty && selectableChanges.every((c) => _selectedIds.contains(c.id))
+                                        ? 'Seçimi Kaldır'
+                                        : 'Tümünü Seç',
+                                    style: const TextStyle(
+                                        color: AppColors.brown700, fontWeight: FontWeight.w700, fontSize: 14),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+                        ),
+                        for (final group in groupEntries) ...[
+                          Padding(
+                            padding: const EdgeInsets.only(top: 12, bottom: 6),
+                            child: Row(
+                              crossAxisAlignment: CrossAxisAlignment.baseline,
+                              textBaseline: TextBaseline.alphabetic,
+                              children: [
+                                Text(
+                                  group.key == _currentStaffName ? 'Sizin Bekleyen Değişiklikleriniz' : group.key,
+                                  style: const TextStyle(
+                                      fontWeight: FontWeight.bold, color: AppColors.brown700, fontSize: 13),
+                                ),
+                                const SizedBox(width: 6),
+                                Text(
+                                  'en son ${_formatFullDateTime(mostRecent(group.value))}',
+                                  style: const TextStyle(color: AppColors.brown400, fontSize: 11),
+                                ),
+                              ],
+                            ),
+                          ),
+                          for (final c in group.value)
+                            SwipeBounceDismiss(
+                              itemKey: ValueKey(c.id),
+                              onDismiss: () => _revoke(c),
+                              builder: (triggerDismiss) => _PendingChangeCard(
+                                change: c,
+                                selected: _selectedIds.contains(c.id),
+                                conflicted: conflictedBarcodes.contains(c.barcode),
+                                onSelectChanged: (v) => _toggleSelect(c.id, v),
+                                onRevoke: triggerDismiss,
+                              ),
+                            ),
+                        ],
+                      ],
+                      const SizedBox(height: 24),
+                      const Divider(),
+                      _SentHistorySection(loading: _historyLoading, history: _history),
+                    ],
+                  );
+                },
+              ),
+            ),
+            const SizedBox(height: 12),
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Expanded(
+                  child: ServerActionButton(
+                    icon: Icons.point_of_sale,
+                    label: 'Kasaya Gönder${_selectedIds.isEmpty ? '' : ' (${_selectedIds.length})'}',
+                    color: AppColors.brown800,
+                    enabled: !_sending && _selectedIds.isNotEmpty,
+                    onPressed: () => _sendSelected(alsoPrintLabel: false),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: ServerActionButton(
+                    icon: Icons.print_outlined,
+                    label: 'Gönder ve Etiket Bastır',
+                    color: AppColors.brown800,
+                    enabled: !_sending && _selectedIds.isNotEmpty,
+                    onPressed: () => _sendSelected(alsoPrintLabel: true),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            OutlinedButton.icon(
+              onPressed: !_sending && _selectedIds.isNotEmpty ? _revokeSelected : null,
+              style: OutlinedButton.styleFrom(
+                side: const BorderSide(color: AppColors.terracotta, width: 2),
+                padding: const EdgeInsets.symmetric(vertical: 12),
+              ),
+              icon: const Icon(Icons.cancel_outlined, size: 18, color: AppColors.terracotta),
+              label: Text(
+                'Seçilenleri İptal Et${_selectedIds.isEmpty ? '' : ' (${_selectedIds.length})'}',
+                style: const TextStyle(color: AppColors.terracotta, fontWeight: FontWeight.w600),
+              ),
+            ),
+          ],
+        ),
+      );
+  }
+}
+
+enum _TeraziyeMode { teraziOnly, kasaVeTerazi }
+
+/// Per-item editable working copy for the Teraziye Gönder flow -- plain
+/// controllers, not staged anywhere, since these edits only ever matter for
+/// the one export payload built at send time (see
+/// _TeraziyeGonderTabState._submit).
+class _TeraziyeItemState {
+  final ListItem item;
+  final TextEditingController nameController;
+  final TextEditingController priceController;
+  final TextEditingController barcodeController;
+  final TextEditingController pluController;
+  bool selected = true;
+
+  _TeraziyeItemState(this.item)
+      : nameController = TextEditingController(text: item.product?.stockname ?? ''),
+        priceController = TextEditingController(text: item.product?.price?.toString() ?? ''),
+        barcodeController = TextEditingController(text: item.barcode),
+        // The scale's own PLU (list_items.custom_data.plu) -- sequential
+        // per list (MANAV and SARKUTERI each start their own numbering at
+        // 1), not Digisoft's general stock code (products.pluno).
+        pluController = TextEditingController(text: item.customData['plu']?.toString() ?? '');
+
+  void dispose() {
+    nameController.dispose();
+    priceController.dispose();
+    barcodeController.dispose();
+    pluController.dispose();
+  }
+}
+
+class _TeraziyeGonderTab extends StatefulWidget {
+  const _TeraziyeGonderTab();
+
+  @override
+  State<_TeraziyeGonderTab> createState() => _TeraziyeGonderTabState();
+}
+
+class _TeraziyeGonderTabState extends State<_TeraziyeGonderTab> {
+  final _repo = DataRepo();
+  // Teraziye only ever works with these two fixed, dedicated lists (real
+  // rows in `lists`, same table Listelerim uses, but hidden from
+  // Listelerim's own browsing -- see reservedTeraziyeListNames) -- not the
+  // general list catalog, so staff can't accidentally send an unrelated
+  // shopping list to the scale.
+  late final Future<List<ProductList>> _listsFuture =
+      _repo.getLists().then((lists) => lists.where((l) => reservedTeraziyeListNames.contains(l.name)).toList());
+  String? _selectedListId;
+  ProductList? _selectedList;
+  List<ListItem> _items = [];
+  bool _itemsLoading = false;
+  _TeraziyeMode _mode = _TeraziyeMode.teraziOnly;
+  final Map<String, _TeraziyeItemState> _itemStates = {};
+
+  @override
+  void dispose() {
+    for (final s in _itemStates.values) {
+      s.dispose();
+    }
+    super.dispose();
+  }
+
+  Future<void> _selectList(ProductList list) async {
+    for (final s in _itemStates.values) {
+      s.dispose();
+    }
+    setState(() {
+      _selectedListId = list.id;
+      _selectedList = list;
+      _itemsLoading = true;
+      _items = [];
+      _itemStates.clear();
+    });
+    final items = await _repo.getListItems(list.id);
+    if (!mounted) return;
+    setState(() {
+      _items = items;
+      _itemsLoading = false;
+      for (final item in items) {
+        _itemStates[item.id] = _TeraziyeItemState(item);
+      }
+    });
+  }
+
+  Future<int> _submit() async {
+    final list = _selectedList;
+    if (list == null) throw StateError('Liste seçilmedi');
+    final included = [
+      for (final item in _items)
+        if (_itemStates[item.id]?.selected ?? false) item,
+    ];
+
+    if (_mode == _TeraziyeMode.kasaVeTerazi) {
+      // Only name/price are things Digisoft's side actually supports
+      // editing right now -- barcode has no field-update path server-side
+      // yet, so it only ever reaches the scale export below.
+      for (final item in included) {
+        final st = _itemStates[item.id]!;
+        final product = item.product;
+        if (product == null) continue;
+        final newName = st.nameController.text.trim();
+        final newPrice = num.tryParse(st.priceController.text.trim().replaceAll(',', '.'));
+        if (newName.isNotEmpty && newName != product.stockname) {
+          unawaited(_repo.requestFieldUpdate(product.barcode, 'stockname', newName, oldValue: product.stockname));
+        }
+        if (newPrice != null && newPrice != product.price) {
+          unawaited(_repo.requestPriceUpdate(product.barcode, newPrice, oldPrice: product.price));
+        }
+      }
+    }
+
+    final payload = [
+      for (final item in included)
+        {
+          'barcode': _itemStates[item.id]!.barcodeController.text.trim(),
+          'stockname': _itemStates[item.id]!.nameController.text.trim(),
+          'price': num.tryParse(_itemStates[item.id]!.priceController.text.trim().replaceAll(',', '.')),
+          'pluno': _itemStates[item.id]!.pluController.text.trim().isEmpty
+              ? null
+              : _itemStates[item.id]!.pluController.text.trim(),
+        },
+    ];
+    return _repo.requestEslExport(listName: list.name, items: payload);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final anySelected = _items.any((i) => _itemStates[i.id]?.selected ?? false);
+    return SingleChildScrollView(
+      padding: const EdgeInsets.all(16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          const SyncHealthBanner(),
+          const SizedBox(height: 16),
+          if (!_teraziyeSendingEnabled)
+            Container(
+              padding: const EdgeInsets.all(14),
+              margin: const EdgeInsets.only(bottom: 16),
+              decoration: BoxDecoration(
+                color: AppColors.terracotta.withValues(alpha: 0.14),
+                borderRadius: BorderRadius.circular(AppRadius.box),
+                border: Border.all(color: AppColors.terracotta, width: 2),
+              ),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Icon(Icons.warning_amber_rounded, color: AppColors.terracotta, size: 28),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text(
+                          'BU ÖZELLİK HENÜZ TAMAMLANMADI',
+                          style: TextStyle(
+                            color: AppColors.terracotta,
+                            fontWeight: FontWeight.w800,
+                            fontSize: 15,
+                            letterSpacing: 0.3,
+                          ),
+                        ),
+                        const SizedBox(height: 4),
+                        const Text(
+                          'MANAV/ŞARKÜTERİ ürün listeleri yanlış -- doğru liste kasa bilgisayarından yüklenene kadar gönderim kapatıldı.',
+                          style: TextStyle(color: AppColors.brown700, fontSize: 12.5, height: 1.4),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          const Text(
+            'Barkod değişiklikleri şimdilik yalnızca teraziye gidiyor, kasa tarafı henüz desteklemiyor.',
+            style: TextStyle(color: AppColors.brown500, fontSize: 12),
+          ),
+          const SizedBox(height: 16),
+          FutureBuilder<List<ProductList>>(
+            future: _listsFuture,
+            builder: (context, snapshot) {
+              final lists = snapshot.data ?? [];
+              return DropdownButtonFormField<String>(
+                initialValue: _selectedListId,
+                isExpanded: true,
+                decoration: const InputDecoration(labelText: 'Liste'),
+                hint: Text(snapshot.connectionState == ConnectionState.waiting ? 'Yükleniyor…' : 'Liste seçin'),
+                items: [
+                  for (final l in lists) DropdownMenuItem(value: l.id, child: Text(l.name, overflow: TextOverflow.ellipsis)),
+                ],
+                onChanged: (id) {
+                  final l = lists.firstWhere((l) => l.id == id);
+                  _selectList(l);
+                },
+              );
+            },
+          ),
+          const SizedBox(height: 16),
+          Row(
+            children: [
+              Expanded(
+                child: _ModeButton(
+                  label: 'Teraziye Gönder',
+                  icon: Icons.monitor_weight_outlined,
+                  selected: _mode == _TeraziyeMode.teraziOnly,
+                  onTap: () => setState(() => _mode = _TeraziyeMode.teraziOnly),
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: _ModeButton(
+                  label: 'Kasa ve Teraziye Gönder',
+                  icon: Icons.point_of_sale,
+                  selected: _mode == _TeraziyeMode.kasaVeTerazi,
+                  onTap: () => setState(() => _mode = _TeraziyeMode.kasaVeTerazi),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 16),
+          if (_itemsLoading)
+            const Padding(
+              padding: EdgeInsets.symmetric(vertical: 24),
+              child: Center(child: CircularProgressIndicator()),
+            )
+          else if (_selectedList != null && _items.isEmpty)
+            const Padding(
+              padding: EdgeInsets.symmetric(vertical: 24),
+              child: Center(child: Text('Bu listede ürün yok.', style: TextStyle(color: AppColors.brown500))),
+            )
+          else
+            for (final item in _items)
+              if (_itemStates[item.id] != null)
+                _TeraziyeItemCard(state: _itemStates[item.id]!, onSelectionChanged: () => setState(() {})),
+          if (_items.isNotEmpty) ...[
+            const SizedBox(height: 8),
+            QueuedActionButton(
+              icon: _mode == _TeraziyeMode.kasaVeTerazi ? Icons.point_of_sale : Icons.monitor_weight_outlined,
+              label: _mode == _TeraziyeMode.kasaVeTerazi ? 'Kasa ve Teraziye Gönder' : 'Teraziye Gönder',
+              enabled: _teraziyeSendingEnabled && anySelected,
+              onSubmit: _submit,
+              watchStatus: _repo.watchEslExportStatus,
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _ModeButton extends StatelessWidget {
+  final String label;
+  final IconData icon;
+  final bool selected;
+  final VoidCallback onTap;
+
+  const _ModeButton({required this.label, required this.icon, required this.selected, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: Colors.transparent,
+      borderRadius: BorderRadius.circular(AppRadius.box),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(AppRadius.box),
+        onTap: onTap,
+        child: Container(
+          padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 8),
+          decoration: BoxDecoration(
+            color: selected ? AppColors.brown800 : Colors.transparent,
+            borderRadius: BorderRadius.circular(AppRadius.box),
+            border: Border.all(color: selected ? AppColors.brown800 : AppColors.brown300, width: 2),
+          ),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(icon, size: 18, color: selected ? Colors.white : AppColors.brown700),
+              const SizedBox(width: 6),
+              Flexible(
+                child: Text(
+                  label,
+                  textAlign: TextAlign.center,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: selected ? Colors.white : AppColors.brown700,
+                    fontWeight: FontWeight.w600,
+                    fontSize: 13,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _TeraziyeItemCard extends StatefulWidget {
+  final _TeraziyeItemState state;
+  final VoidCallback onSelectionChanged;
+
+  const _TeraziyeItemCard({required this.state, required this.onSelectionChanged});
+
+  @override
+  State<_TeraziyeItemCard> createState() => _TeraziyeItemCardState();
+}
+
+class _TeraziyeItemCardState extends State<_TeraziyeItemCard> {
+  @override
+  Widget build(BuildContext context) {
+    final st = widget.state;
+    return Container(
+      margin: const EdgeInsets.only(bottom: 8),
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: AppColors.creamCard,
+        borderRadius: BorderRadius.circular(AppRadius.box),
+        border: Border.all(color: st.selected ? AppColors.terracotta : AppColors.creamBorder, width: st.selected ? 2 : 1),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Checkbox(
+            value: st.selected,
+            activeColor: AppColors.terracotta,
+            onChanged: (v) {
+              setState(() => st.selected = v ?? false);
+              widget.onSelectionChanged();
+            },
+          ),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                TextField(
+                  controller: st.nameController,
+                  style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: AppColors.brown900),
+                  decoration: const InputDecoration(labelText: 'İsim', isDense: true),
+                ),
+                const SizedBox(height: 8),
+                Row(
+                  children: [
+                    Expanded(
+                      flex: 3,
+                      child: TextField(
+                        controller: st.barcodeController,
+                        style: const TextStyle(fontSize: 13),
+                        decoration: const InputDecoration(labelText: 'Barkod', isDense: true),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      flex: 2,
+                      child: TextField(
+                        controller: st.priceController,
+                        keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                        style: const TextStyle(fontSize: 13),
+                        decoration: const InputDecoration(labelText: 'Fiyat', isDense: true),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 8),
+                TextField(
+                  controller: st.pluController,
+                  style: const TextStyle(fontSize: 13),
+                  decoration: const InputDecoration(labelText: 'PLU No', isDense: true),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _PendingChangeCard extends StatelessWidget {
+  final PendingChange change;
+  final bool selected;
+  /// True when another product_pending_changes row for this *same barcode*
+  /// (any field) was staged by a different requester -- two people
+  /// mid-editing the same product at once. Blocked from selection until
+  /// one side reverts theirs, since sending blind here risks clobbering
+  /// whichever change loses.
+  final bool conflicted;
+  final ValueChanged<bool> onSelectChanged;
+  final VoidCallback onRevoke;
+
+  const _PendingChangeCard({
+    required this.change,
+    required this.selected,
+    required this.conflicted,
+    required this.onSelectChanged,
+    required this.onRevoke,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final alreadyApplied = _alreadyApplied(change);
+    return Container(
+      margin: const EdgeInsets.only(bottom: 8),
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: conflicted ? AppColors.terracotta.withValues(alpha: 0.10) : AppColors.creamCard,
+        borderRadius: BorderRadius.circular(AppRadius.box),
+        border: Border.all(
+          color: conflicted || alreadyApplied || selected ? AppColors.terracotta : AppColors.creamBorder,
+          width: conflicted ? 2.5 : (alreadyApplied || selected ? 2 : 1),
+        ),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Checkbox(
+            value: selected,
+            onChanged: conflicted ? null : (v) => onSelectChanged(v ?? false),
+            activeColor: AppColors.terracotta,
+          ),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  change.product?.stockname ?? change.barcode,
+                  style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: AppColors.brown900),
+                ),
+                Text(change.barcode, style: const TextStyle(fontSize: 13, color: AppColors.brown500)),
+                Padding(
+                  padding: const EdgeInsets.only(top: 2),
+                  child: Text(
+                    // Who staged this is now shown once, on the group
+                    // header above, instead of repeated per card -- this is
+                    // the source list (or "Ürün Ara" if staged straight
+                    // from search) and exactly when, which the group header
+                    // doesn't carry.
+                    '${change.sourceListName ?? 'Ürün Ara'} · ${_formatTime(change.createdAt)}',
+                    style: const TextStyle(fontSize: 11, color: AppColors.brown400, fontStyle: FontStyle.italic),
+                  ),
+                ),
+                const SizedBox(height: 6),
+                RichText(
+                  text: TextSpan(
+                    style: const TextStyle(fontSize: 12, color: AppColors.brown500),
+                    children: [
+                      TextSpan(
+                        text:
+                            '${_fieldLabel(change.field)}: ${change.field == 'price' ? formatPrice(change.product?.price) : (change.product?.stockname ?? '-')}  →  ',
+                      ),
+                      TextSpan(
+                        text: _formatValue(change.field, change.newValue),
+                        style: const TextStyle(fontWeight: FontWeight.bold, color: AppColors.terracotta),
+                      ),
+                    ],
+                  ),
+                ),
+                if (alreadyApplied)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 6),
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Icon(Icons.error_outline, size: 14, color: AppColors.terracotta),
+                        const SizedBox(width: 4),
+                        Expanded(
+                          child: Text(
+                            'Kasadaki ${_fieldLabel(change.field).toLowerCase()} zaten güncellenmiş: '
+                            '${_formatValue(change.field, _currentValueFor(change))} -- muhtemelen zaten gönderilmiş.',
+                            style: const TextStyle(
+                                fontSize: 11, color: AppColors.terracotta, fontWeight: FontWeight.w600),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                if (conflicted)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 6),
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Icon(Icons.warning_amber_rounded, size: 14, color: AppColors.terracotta),
+                        const SizedBox(width: 4),
+                        const Expanded(
+                          child: Text(
+                            'Bu üründe başka bir kullanıcının da bekleyen değişikliği var -- '
+                            'biri geri alınmadan gönderilemez.',
+                            style: TextStyle(fontSize: 11, color: AppColors.terracotta, fontWeight: FontWeight.w700),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+              ],
+            ),
+          ),
+          SquareIconButton(
+            icon: Icons.close,
+            color: AppColors.terracotta,
+            tooltip: 'Öneriyi İptal Et',
+            onPressed: onRevoke,
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// "Eski Gönderilenler" -- collapsed by default. Sends fired from the same
+/// batch (same sender, same minute) are grouped under one collapsible
+/// header so a multi-item send doesn't flood the list.
+class _SentHistorySection extends StatefulWidget {
+  final bool loading;
+  final List<SentChangeRecord> history;
+
+  const _SentHistorySection({required this.loading, required this.history});
+
+  @override
+  State<_SentHistorySection> createState() => _SentHistorySectionState();
+}
+
+class _SentHistorySectionState extends State<_SentHistorySection> {
+  bool _expanded = false;
+
+  Map<String, List<SentChangeRecord>> _grouped() {
+    final grouped = <String, List<SentChangeRecord>>{};
+    for (final r in widget.history) {
+      final key = '${r.requestedBy ?? "?"}|${_formatTime(r.at)}';
+      grouped.putIfAbsent(key, () => []).add(r);
+    }
+    return grouped;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final groups = _grouped();
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        InkWell(
+          onTap: () => setState(() => _expanded = !_expanded),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(vertical: 12),
+            child: Row(
+              children: [
+                Icon(_expanded ? Icons.expand_less : Icons.expand_more, color: AppColors.brown700),
+                const SizedBox(width: 4),
+                const Text(
+                  'Eski Gönderilenler',
+                  style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15, color: AppColors.brown800),
+                ),
+                if (!_expanded && widget.history.isNotEmpty) ...[
+                  const SizedBox(width: 6),
+                  Text('(${widget.history.length})', style: const TextStyle(color: AppColors.brown400, fontSize: 13)),
+                ],
+              ],
+            ),
+          ),
+        ),
+        if (_expanded) ...[
+          const Text(
+            '"Gönderildi" = servis Digisoft\'a yazdı ve kasaya gönderdi. Bazı "hızlı '
+            'tuş" ürünlerde bu, kasa ekranının görsel olarak yenilendiğini garanti '
+            'etmez -- şüpheliyse fiziksel olarak kontrol edin.',
+            style: TextStyle(color: AppColors.brown400, fontSize: 11),
+          ),
+          const SizedBox(height: 8),
+          if (widget.loading)
+            const Padding(
+              padding: EdgeInsets.symmetric(vertical: 16),
+              child: Center(child: CircularProgressIndicator(strokeWidth: 2)),
+            )
+          else if (widget.history.isEmpty)
+            const Padding(
+              padding: EdgeInsets.symmetric(vertical: 8),
+              child: Text('Henüz gönderim yok.', style: TextStyle(color: AppColors.brown500, fontSize: 13)),
+            )
+          else
+            for (final entry in groups.entries) _SentHistoryGroup(groupKey: entry.key, records: entry.value),
+        ],
+      ],
+    );
+  }
+}
+
+class _SentHistoryGroup extends StatefulWidget {
+  final String groupKey;
+  final List<SentChangeRecord> records;
+
+  const _SentHistoryGroup({required this.groupKey, required this.records});
+
+  @override
+  State<_SentHistoryGroup> createState() => _SentHistoryGroupState();
+}
+
+class _SentHistoryGroupState extends State<_SentHistoryGroup> {
+  bool _expanded = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final anyError = widget.records.any((r) => r.status != 'done');
+    final color = anyError ? AppColors.terracotta : AppColors.success;
+    final parts = widget.groupKey.split('|');
+    final who = parts[0];
+    final when = parts.length > 1 ? parts[1] : '';
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 8),
+      decoration: BoxDecoration(
+        color: AppColors.creamCard,
+        borderRadius: BorderRadius.circular(AppRadius.box),
+        border: Border.all(color: AppColors.creamBorder),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          InkWell(
+            onTap: () => setState(() => _expanded = !_expanded),
+            child: Padding(
+              padding: const EdgeInsets.all(10),
+              child: Row(
+                children: [
+                  Icon(_expanded ? Icons.expand_less : Icons.expand_more, color: color, size: 20),
+                  const SizedBox(width: 4),
+                  Expanded(
+                    child: Text(
+                      '$who · $when',
+                      style: TextStyle(fontWeight: FontWeight.w600, fontSize: 12, color: color),
+                    ),
+                  ),
+                  Text('${widget.records.length} değişiklik', style: const TextStyle(fontSize: 11, color: AppColors.brown400)),
+                ],
+              ),
+            ),
+          ),
+          if (_expanded)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(12, 0, 12, 10),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [for (final r in widget.records) _SentHistoryRow(record: r)],
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+class _SentHistoryRow extends StatelessWidget {
+  final SentChangeRecord record;
+  const _SentHistoryRow({required this.record});
+
+  @override
+  Widget build(BuildContext context) {
+    final done = record.status == 'done';
+    final color = done ? AppColors.success : AppColors.terracotta;
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 6),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(done ? Icons.check_circle : Icons.error, color: color, size: 14),
+          const SizedBox(width: 6),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  record.stockname ?? record.barcode,
+                  style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 12, color: AppColors.brown900),
+                ),
+                RichText(
+                  text: TextSpan(
+                    style: const TextStyle(fontSize: 12, color: AppColors.brown500),
+                    children: [
+                      TextSpan(text: '${_fieldLabel(record.field)}: ${_formatValue(record.field, record.oldValue)}  →  '),
+                      TextSpan(
+                        text: _formatValue(record.field, record.newValue),
+                        style: const TextStyle(fontWeight: FontWeight.bold, color: AppColors.terracotta),
+                      ),
+                    ],
+                  ),
+                ),
+                if (!done && record.errorMessage != null)
+                  Text(record.errorMessage!, style: TextStyle(fontSize: 11, color: color)),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}

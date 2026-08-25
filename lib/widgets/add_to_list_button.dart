@@ -41,16 +41,17 @@ class _AddToListButtonState extends State<AddToListButton> {
       return;
     }
 
-    final selected = await showModalBottomSheet<ProductList>(
+    final result = await showModalBottomSheet<(ProductList, String)>(
       context: context,
       backgroundColor: Colors.transparent,
       isScrollControlled: true,
       builder: (_) => _ListPickerSheet(lists: lists, productName: widget.product.stockname),
     );
-    if (selected == null || !mounted) return;
+    if (result == null || !mounted) return;
+    final (selected, note) = result;
 
     try {
-      await _repo.addListItem(selected.id, widget.product.barcode);
+      await _repo.addListItem(selected.id, widget.product.barcode, note: note);
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('"${selected.name}" listesine eklendi.')),
@@ -84,72 +85,90 @@ class _AddToListButtonState extends State<AddToListButton> {
   }
 }
 
-class _ListPickerSheet extends StatelessWidget {
+class _ListPickerSheet extends StatefulWidget {
   final List<ProductList> lists;
   final String productName;
 
   const _ListPickerSheet({required this.lists, required this.productName});
 
-  static const _typeAccent = {
-    ListKind.priceCheck: AppColors.terracotta,
-    ListKind.restock: AppColors.olive,
-    ListKind.priceChange: AppColors.mustard,
-    ListKind.custom: AppColors.brown500,
-  };
+  @override
+  State<_ListPickerSheet> createState() => _ListPickerSheetState();
+}
+
+class _ListPickerSheetState extends State<_ListPickerSheet> {
+  final _noteController = TextEditingController();
+
+  @override
+  void dispose() {
+    _noteController.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
-    return SafeArea(
-      child: Container(
-        decoration: const BoxDecoration(
-          color: AppColors.cream,
-          borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-        ),
-        constraints: BoxConstraints(maxHeight: MediaQuery.of(context).size.height * 0.7),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Padding(
-              padding: const EdgeInsets.fromLTRB(20, 20, 20, 8),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Text('Listeye Ekle', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18, color: AppColors.brown900)),
-                  const SizedBox(height: 2),
-                  Text(productName, style: const TextStyle(color: AppColors.brown500), maxLines: 1, overflow: TextOverflow.ellipsis),
-                ],
+    return Padding(
+      padding: EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom),
+      child: SafeArea(
+        child: Container(
+          decoration: const BoxDecoration(
+            color: AppColors.cream,
+            borderRadius: BorderRadius.vertical(top: Radius.circular(AppRadius.sheet)),
+          ),
+          constraints: BoxConstraints(maxHeight: MediaQuery.of(context).size.height * 0.8),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(20, 20, 20, 8),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text('Listeye Ekle', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18, color: AppColors.brown900)),
+                    const SizedBox(height: 2),
+                    Text(widget.productName, style: const TextStyle(color: AppColors.brown500), maxLines: 1, overflow: TextOverflow.ellipsis),
+                  ],
+                ),
               ),
-            ),
-            const Divider(height: 1),
-            Flexible(
-              child: ListView.separated(
-                shrinkWrap: true,
-                padding: const EdgeInsets.symmetric(vertical: 8),
-                itemCount: lists.length,
-                separatorBuilder: (_, _) => const Divider(height: 1),
-                itemBuilder: (context, i) {
-                  final l = lists[i];
-                  return ListTile(
-                    title: Text(l.name, style: const TextStyle(fontWeight: FontWeight.w600, color: AppColors.brown900)),
-                    trailing: Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                      decoration: BoxDecoration(
-                        color: _typeAccent[l.type]!.withValues(alpha: 0.15),
-                        borderRadius: BorderRadius.circular(999),
-                      ),
-                      child: Text(
-                        l.type.label,
-                        style: TextStyle(color: _typeAccent[l.type], fontWeight: FontWeight.w600, fontSize: 12),
-                      ),
-                    ),
-                    onTap: () => Navigator.of(context).pop(l),
-                  );
-                },
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 20),
+                child: TextField(
+                  controller: _noteController,
+                  decoration: const InputDecoration(labelText: 'Not (opsiyonel)', isDense: true),
+                  maxLines: 2,
+                ),
               ),
-            ),
-            const SizedBox(height: 8),
-          ],
+              const SizedBox(height: 8),
+              const Divider(height: 1),
+              Flexible(
+                child: ListView.separated(
+                  shrinkWrap: true,
+                  padding: const EdgeInsets.symmetric(vertical: 8),
+                  itemCount: widget.lists.length,
+                  separatorBuilder: (_, _) => const Divider(height: 1),
+                  itemBuilder: (context, i) {
+                    final l = widget.lists[i];
+                    return ListTile(
+                      title: Text(l.name, style: const TextStyle(fontWeight: FontWeight.w600, color: AppColors.brown900)),
+                      trailing: Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                        decoration: BoxDecoration(
+                          color: l.type.accentColor.withValues(alpha: 0.15),
+                          borderRadius: BorderRadius.circular(AppRadius.chip),
+                        ),
+                        child: Text(
+                          l.type.label,
+                          style: TextStyle(color: l.type.accentColor, fontWeight: FontWeight.w600, fontSize: 12),
+                        ),
+                      ),
+                      onTap: () => Navigator.of(context).pop((l, _noteController.text.trim())),
+                    );
+                  },
+                ),
+              ),
+              const SizedBox(height: 8),
+            ],
+          ),
         ),
       ),
     );

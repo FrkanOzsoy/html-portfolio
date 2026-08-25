@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import '../data_repo.dart';
 import '../models.dart';
+import '../platform_util.dart';
 import '../theme.dart';
 import 'list_detail_screen.dart';
 
@@ -32,29 +33,30 @@ class _ListsScreenState extends State<ListsScreen> {
     );
   }
 
-  static const _typeAccent = {
-    ListKind.priceCheck: AppColors.terracotta,
-    ListKind.restock: AppColors.olive,
-    ListKind.priceChange: AppColors.mustard,
-    ListKind.custom: AppColors.brown500,
-  };
 
   @override
   Widget build(BuildContext context) {
+    final desktop = isDesktopPlatform;
     return SafeArea(
       child: Padding(
         padding: const EdgeInsets.all(16),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            OutlinedButton(
-              onPressed: _openNewListSheet,
-              style: OutlinedButton.styleFrom(
-                padding: const EdgeInsets.symmetric(vertical: 14),
-                side: const BorderSide(color: AppColors.brown300, width: 2, style: BorderStyle.solid),
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+            SizedBox(
+              height: desktop ? 56 : null,
+              child: OutlinedButton(
+                onPressed: _openNewListSheet,
+                style: OutlinedButton.styleFrom(
+                  padding: const EdgeInsets.symmetric(vertical: 14),
+                  side: const BorderSide(color: AppColors.brown300, width: 2, style: BorderStyle.solid),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(AppRadius.box)),
+                ),
+                child: Text(
+                  '+ Yeni Liste Oluştur',
+                  style: TextStyle(color: AppColors.brown600, fontWeight: FontWeight.w600, fontSize: desktop ? 16 : 14),
+                ),
               ),
-              child: const Text('+ Yeni Liste Oluştur', style: TextStyle(color: AppColors.brown600, fontWeight: FontWeight.w600)),
             ),
             const SizedBox(height: 16),
             Expanded(
@@ -64,54 +66,109 @@ class _ListsScreenState extends State<ListsScreen> {
                   if (!snapshot.hasData) {
                     return const Center(child: CircularProgressIndicator());
                   }
-                  final lists = snapshot.data!;
+                  final lists = snapshot.data!.where((l) => !reservedTeraziyeListNames.contains(l.name)).toList();
                   if (lists.isEmpty) {
-                    return const Center(
-                      child: Text('Henüz liste oluşturulmadı.', style: TextStyle(color: AppColors.brown500)),
+                    return Center(
+                      child: Text(
+                        'Henüz liste oluşturulmadı.',
+                        style: TextStyle(color: AppColors.brown500, fontSize: desktop ? 18 : 14),
+                      ),
+                    );
+                  }
+                  // Desktop: a grid instead of a single narrow column -- a
+                  // list of one-line cards down the middle of a 1500px-wide
+                  // area was most of what made this screen look empty.
+                  if (desktop) {
+                    return GridView.builder(
+                      gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
+                        maxCrossAxisExtent: 340,
+                        mainAxisExtent: 100,
+                        crossAxisSpacing: 12,
+                        mainAxisSpacing: 12,
+                      ),
+                      itemCount: lists.length,
+                      itemBuilder: (context, i) => _ListCard(list: lists[i], onTap: () => _openList(lists[i]), desktop: true),
                     );
                   }
                   return ListView.separated(
                     itemCount: lists.length,
                     separatorBuilder: (_, _) => const SizedBox(height: 8),
-                    itemBuilder: (context, i) {
-                      final l = lists[i];
-                      return InkWell(
-                        borderRadius: BorderRadius.circular(16),
-                        onTap: () => _openList(l),
-                        child: Container(
-                          padding: const EdgeInsets.all(14),
-                          decoration: BoxDecoration(
-                            color: AppColors.creamCard,
-                            borderRadius: BorderRadius.circular(16),
-                            border: Border.all(color: AppColors.creamBorder),
-                          ),
-                          child: Row(
-                            children: [
-                              Expanded(
-                                child: Text(l.name, style: const TextStyle(fontWeight: FontWeight.bold, color: AppColors.brown900)),
-                              ),
-                              Container(
-                                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                                decoration: BoxDecoration(
-                                  color: _typeAccent[l.type]!.withValues(alpha: 0.15),
-                                  borderRadius: BorderRadius.circular(999),
-                                ),
-                                child: Text(
-                                  l.type.label,
-                                  style: TextStyle(color: _typeAccent[l.type], fontWeight: FontWeight.w600, fontSize: 12),
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                      );
-                    },
+                    itemBuilder: (context, i) => _ListCard(list: lists[i], onTap: () => _openList(lists[i]), desktop: false),
                   );
                 },
               ),
             ),
           ],
         ),
+      ),
+    );
+  }
+}
+
+class _ListCard extends StatelessWidget {
+  final ProductList list;
+  final VoidCallback onTap;
+  final bool desktop;
+
+  const _ListCard({required this.list, required this.onTap, required this.desktop});
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      borderRadius: BorderRadius.circular(AppRadius.box),
+      onTap: onTap,
+      child: Container(
+        padding: EdgeInsets.all(desktop ? 18 : 14),
+        decoration: BoxDecoration(
+          color: AppColors.creamCard,
+          borderRadius: BorderRadius.circular(AppRadius.box),
+          border: Border.all(color: AppColors.creamBorder),
+        ),
+        child: desktop
+            ? Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Text(
+                    list.name,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 17, color: AppColors.brown900),
+                  ),
+                  Align(
+                    alignment: Alignment.centerLeft,
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                      decoration: BoxDecoration(
+                        color: list.type.accentColor.withValues(alpha: 0.15),
+                        borderRadius: BorderRadius.circular(AppRadius.chip),
+                      ),
+                      child: Text(
+                        list.type.label,
+                        style: TextStyle(color: list.type.accentColor, fontWeight: FontWeight.w600, fontSize: 13),
+                      ),
+                    ),
+                  ),
+                ],
+              )
+            : Row(
+                children: [
+                  Expanded(
+                    child: Text(list.name, style: const TextStyle(fontWeight: FontWeight.bold, color: AppColors.brown900)),
+                  ),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                    decoration: BoxDecoration(
+                      color: list.type.accentColor.withValues(alpha: 0.15),
+                      borderRadius: BorderRadius.circular(AppRadius.chip),
+                    ),
+                    child: Text(
+                      list.type.label,
+                      style: TextStyle(color: list.type.accentColor, fontWeight: FontWeight.w600, fontSize: 12),
+                    ),
+                  ),
+                ],
+              ),
       ),
     );
   }
@@ -189,7 +246,7 @@ class _NewListSheetState extends State<_NewListSheet> {
       child: Container(
         decoration: const BoxDecoration(
           color: AppColors.cream,
-          borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+          borderRadius: BorderRadius.vertical(top: Radius.circular(AppRadius.sheet)),
         ),
         padding: const EdgeInsets.all(20),
         child: SingleChildScrollView(

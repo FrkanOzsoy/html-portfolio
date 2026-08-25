@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
+import '../data_repo.dart';
 import '../export.dart';
 import '../models.dart';
 import '../theme.dart';
@@ -37,6 +38,7 @@ class _ExportSheet extends StatefulWidget {
 }
 
 class _ExportSheetState extends State<_ExportSheet> {
+  final _repo = DataRepo();
   late final Set<String> _selectedKeys = widget.columns.map((c) => c.key).toSet();
   bool _busy = false;
 
@@ -55,6 +57,7 @@ class _ExportSheetState extends State<_ExportSheet> {
       await SharePlus.instance.share(
         ShareParams(files: [XFile(file.path, mimeType: mimeType)], text: widget.list.name),
       );
+      await _repo.logAction('disa_aktarildi', detail: '${widget.list.name} ($extension)');
       if (mounted) Navigator.of(context).pop();
     } finally {
       if (mounted) setState(() => _busy = false);
@@ -78,6 +81,7 @@ class _ExportSheetState extends State<_ExportSheet> {
   Future<void> _copyToClipboard() async {
     final text = buildPlainText(_activeColumns, widget.items);
     await Clipboard.setData(ClipboardData(text: text));
+    await _repo.logAction('disa_aktarildi', detail: '${widget.list.name} (panoya)');
     if (!mounted) return;
     Navigator.of(context).pop();
     ScaffoldMessenger.of(context).showSnackBar(
@@ -92,7 +96,7 @@ class _ExportSheetState extends State<_ExportSheet> {
       child: Container(
         decoration: const BoxDecoration(
           color: AppColors.cream,
-          borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+          borderRadius: BorderRadius.vertical(top: Radius.circular(AppRadius.sheet)),
         ),
         constraints: BoxConstraints(maxHeight: MediaQuery.of(context).size.height * 0.85),
         child: Column(

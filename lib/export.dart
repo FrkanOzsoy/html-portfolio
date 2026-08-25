@@ -1,4 +1,5 @@
 import 'package:excel/excel.dart';
+import 'format.dart';
 import 'models.dart';
 
 /// One exportable column: a stable [key] (used to remember which columns the
@@ -18,7 +19,7 @@ List<ExportColumn> exportColumnsFor(ProductList list) {
   final columns = <ExportColumn>[
     ExportColumn(key: 'barcode', label: 'Barkod', getValue: (i) => i.barcode),
     ExportColumn(key: 'name', label: 'Ürün Adı', getValue: (i) => i.product?.stockname ?? ''),
-    ExportColumn(key: 'price', label: 'Fiyat', getValue: (i) => i.product?.price?.toString() ?? ''),
+    ExportColumn(key: 'price', label: 'Fiyat', getValue: (i) => formatPrice(i.product?.price)),
     ExportColumn(key: 'unit', label: 'Birim', getValue: (i) => i.product?.stockunit ?? ''),
   ];
 
@@ -26,7 +27,7 @@ List<ExportColumn> exportColumnsFor(ProductList list) {
     case ListKind.restock:
       columns.add(ExportColumn(key: 'quantity', label: 'Miktar', getValue: (i) => i.quantity?.toString() ?? ''));
     case ListKind.priceChange:
-      columns.add(ExportColumn(key: 'new_price', label: 'Yeni Fiyat', getValue: (i) => i.newPrice?.toString() ?? ''));
+      columns.add(ExportColumn(key: 'new_price', label: 'Yeni Fiyat', getValue: (i) => formatPrice(i.newPrice)));
     case ListKind.priceCheck:
       columns.add(ExportColumn(key: 'note', label: 'Not', getValue: (i) => i.note ?? ''));
     case ListKind.custom:
@@ -53,15 +54,15 @@ String buildCsv(List<ExportColumn> columns, List<ListItem> items) {
   return '﻿${lines.join('\r\n')}';
 }
 
-/// Tab-separated -- pastes straight into a spreadsheet (Excel/Sheets split
-/// columns on tabs automatically) while still being plain, readable text
-/// when pasted into a chat app or notes.
+/// "----" separates both the columns within one product and the products
+/// from each other, so it reads cleanly when pasted into a chat app or notes
+/// (no reliance on tab alignment surviving the paste).
 String buildPlainText(List<ExportColumn> columns, List<ListItem> items) {
-  final lines = [
-    columns.map((c) => c.label).join('\t'),
-    for (final item in items) columns.map((c) => c.getValue(item)).join('\t'),
+  final blocks = [
+    for (final item in items)
+      columns.map((c) => '${c.label}: ${c.getValue(item)}').join(' ---- '),
   ];
-  return lines.join('\n');
+  return blocks.join('\n----\n');
 }
 
 List<int> buildXlsxBytes(String sheetName, List<ExportColumn> columns, List<ListItem> items) {
