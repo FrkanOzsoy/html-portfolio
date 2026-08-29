@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:convert';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:uuid/uuid.dart';
@@ -316,23 +315,23 @@ class DataRepo {
       _pollRequestStatus('product_create_requests', id);
 
   // ---- "Teraziye Gönder" -- CAS-LP scale PLU export (CASLP16.PLU). Staff
-  // pick one of their own lists (same `lists`/`list_items` this app already
-  // uses for Listelerim), review/correct each item's name, price, barcode,
-  // and PLU number, then send. The edited item data itself is the payload
-  // -- encoded as JSON in `list` (still just a text column) -- rather than
-  // a department name the till-PC service would have to resolve against
-  // its own live Digisoft data, since the whole point here is sending
-  // exactly what staff just corrected.
+  // pick MANAV or SARKUTERI, optionally correct names/prices (those go out
+  // as normal product-change requests, above), then send. The `list` column
+  // is just the reyon name: the till-PC service (eslSync.js) regenerates
+  // CASLP16.PLU from Digisoft's own live TBLSTOKLAR rows WHERE REYON = list,
+  // so it must be exactly 'MANAV' or 'SARKUTERI' (there's a CHECK constraint
+  // on the column enforcing that). It is NOT a JSON payload -- an earlier
+  // design sent the edited items inline here, but the till-PC side never
+  // consumed it and the CHECK made every such insert fail.
 
-  Future<int> requestEslExport({required String listName, required List<Map<String, dynamic>> items}) async {
+  Future<int> requestEslExport({required String listName, required int itemCount}) async {
     final name = await getStaffName();
-    final payload = jsonEncode({'listName': listName, 'items': items});
     final row = await _client
         .from('esl_export_requests')
-        .insert({'list': payload, 'item_count': items.length, 'requested_by': name})
+        .insert({'list': listName, 'item_count': itemCount, 'requested_by': name})
         .select('id')
         .single();
-    unawaited(logAction('teraziye_gonderim_istegi', detail: '$listName (${items.length} ürün)'));
+    unawaited(logAction('teraziye_gonderim_istegi', detail: '$listName ($itemCount ürün)'));
     return row['id'] as int;
   }
 

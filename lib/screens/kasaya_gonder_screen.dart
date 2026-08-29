@@ -613,16 +613,10 @@ class _TeraziyeGonderTabState extends State<_TeraziyeGonderTab> {
       }
     }
 
-    final payload = [
-      for (final item in _items)
-        {
-          'barcode': item.barcode,
-          'stockname': _itemStates[item.id]!.nameController.text.trim(),
-          'price': num.tryParse(_itemStates[item.id]!.priceController.text.trim().replaceAll(',', '.')),
-          'pluno': _itemStates[item.id]!.plu,
-        },
-    ];
-    return _repo.requestEslExport(listName: list.name, items: payload);
+    // The scale export just needs the reyon name -- the till-PC rebuilds
+    // the PLU file from Digisoft's own rows (which the name/price requests
+    // above will have updated by the time it runs).
+    return _repo.requestEslExport(listName: list.name, itemCount: _items.length);
   }
 
   @override
@@ -741,6 +735,13 @@ class _TeraziyeGonderTabState extends State<_TeraziyeGonderTab> {
                 enabled: _teraziyeSendingEnabled,
                 onSubmit: _submit,
                 watchStatus: _repo.watchEslExportStatus,
+                // Reload once it's through so the name/price fields refresh
+                // to the just-applied values -- otherwise a second press
+                // would re-send every diff again.
+                onDone: () {
+                  final l = _selectedList;
+                  if (l != null) _selectList(l);
+                },
               ),
             ),
           ),
@@ -757,15 +758,21 @@ class _TeraziyeSendButtons extends StatelessWidget {
   final bool enabled;
   final Future<int> Function(_TeraziyeMode mode) onSubmit;
   final Stream<({String status, String? errorMessage})> Function(int id) watchStatus;
+  final VoidCallback onDone;
 
   const _TeraziyeSendButtons({
     required this.enabled,
     required this.onSubmit,
     required this.watchStatus,
+    required this.onDone,
   });
 
   @override
   Widget build(BuildContext context) {
+    void handleFinished(String status) {
+      if (status == 'done') onDone();
+    }
+
     final terazi = QueuedActionButton(
       icon: Icons.monitor_weight_outlined,
       label: 'Teraziye Gönder',
@@ -773,6 +780,7 @@ class _TeraziyeSendButtons extends StatelessWidget {
       padding: const EdgeInsets.symmetric(vertical: 20),
       onSubmit: () => onSubmit(_TeraziyeMode.teraziOnly),
       watchStatus: watchStatus,
+      onFinished: handleFinished,
     );
     final kasaVeTerazi = QueuedActionButton(
       icon: Icons.point_of_sale,
@@ -782,6 +790,7 @@ class _TeraziyeSendButtons extends StatelessWidget {
       padding: const EdgeInsets.symmetric(vertical: 20),
       onSubmit: () => onSubmit(_TeraziyeMode.kasaVeTerazi),
       watchStatus: watchStatus,
+      onFinished: handleFinished,
     );
     if (isDesktopPlatform) {
       return Row(
