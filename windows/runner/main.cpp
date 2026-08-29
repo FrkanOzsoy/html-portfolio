@@ -28,9 +28,12 @@ int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE prev,
   Win32Window::Point origin(10, 10);
   // The window opens maximized (see Win32Window::Show); this is only the
   // "restored down" size the user gets when they un-maximize -- 1366x768,
-  // the most common till/office screen, still roomy for the Ürün Ara table.
+  // the most common till/office screen, still roomy for the Urun Ara table.
   Win32Window::Size size(1366, 768);
-  if (!window.Create(L"barkod_tarayici", origin, size)) {
+  // This file is UTF-8; windows/CMakeLists.txt passes /utf-8 so MSVC reads
+  // the literal below (and any other non-ASCII) correctly rather than as
+  // the system codepage.
+  if (!window.Create(L"ÇÇM-Barkod Okuyucu", origin, size)) {
     return EXIT_FAILURE;
   }
   window.SetQuitOnClose(true);

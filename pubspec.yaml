@@ -120,10 +120,8 @@ flutter_launcher_icons:
   adaptive_icon_foreground: "assets/icon/icon.png"
   ios: true
   remove_alpha_ios: true
-  # Windows: same opaque-square logo as iOS -- Windows applies no mask of
-  # its own, so the square (not the pre-rounded Android asset) is the one
-  # that reads cleanly in the taskbar and title bar.
-  windows:
-    generate: true
-    image_path: "assets/icon/icon.png"
-    icon_size: 256
+  # Windows icon is NOT generated here -- flutter_launcher_icons only emits a
+  # single 256px frame, which Windows then downscales blurrily for the 16/24/
+  # 32px taskbar sizes. windows/runner/resources/app_icon.ico is instead a
+  # real multi-resolution .ico built from assets/icon/icon.png by
+  # scripts/make_windows_icon.ps1 (same opaque-square logo as iOS).
