@@ -389,6 +389,9 @@ class _ReceiptsSection extends StatefulWidget {
 }
 
 class _ReceiptsSectionState extends State<_ReceiptsSection> {
+  // Cached so a parent rebuild (e.g. a note change) doesn't recreate the
+  // stream and flash the spinner.
+  late final Stream<List<KasaReceipt>> _stream = widget.repo.watchRecentReceipts();
   final _older = <KasaReceipt>[];
   bool _loadingMore = false;
 
@@ -405,7 +408,7 @@ class _ReceiptsSectionState extends State<_ReceiptsSection> {
   @override
   Widget build(BuildContext context) {
     return StreamBuilder<List<KasaReceipt>>(
-      stream: widget.repo.watchRecentReceipts(),
+      stream: _stream,
       builder: (context, snap) {
         if (!snap.hasData) {
           return const Center(child: CircularProgressIndicator());
@@ -527,19 +530,31 @@ Future<void> _openDetail(BuildContext context, KasaRepo repo, KasaReceipt r) {
   );
 }
 
-class _ReceiptDetailSheet extends StatelessWidget {
+class _ReceiptDetailSheet extends StatefulWidget {
   final KasaRepo repo;
   final KasaReceipt receipt;
   const _ReceiptDetailSheet({required this.repo, required this.receipt});
 
   @override
+  State<_ReceiptDetailSheet> createState() => _ReceiptDetailSheetState();
+}
+
+class _ReceiptDetailSheetState extends State<_ReceiptDetailSheet> {
+  // Cached so dragging the sheet doesn't re-run the fetch / re-subscribe.
+  late final Future<({List<KasaReceiptLine> lines, List<KasaPayment> payments})> _detail =
+      widget.repo.getReceiptDetail(widget.receipt);
+  late final Stream<Map<String, KasaReceiptNote>> _notes = widget.repo.watchReceiptNotes();
+
+  @override
   Widget build(BuildContext context) {
+    final repo = widget.repo;
+    final receipt = widget.receipt;
     return DraggableScrollableSheet(
       expand: false,
       initialChildSize: 0.7,
       maxChildSize: 0.92,
       builder: (context, scroll) => FutureBuilder<({List<KasaReceiptLine> lines, List<KasaPayment> payments})>(
-        future: repo.getReceiptDetail(receipt),
+        future: _detail,
         builder: (context, snap) {
           return ListView(
             controller: scroll,
@@ -578,7 +593,7 @@ class _ReceiptDetailSheet extends StatelessWidget {
               ],
               const SizedBox(height: 12),
               StreamBuilder<Map<String, KasaReceiptNote>>(
-                stream: repo.watchReceiptNotes(),
+                stream: _notes,
                 builder: (context, ns) {
                   final note = ns.data?[receipt.belgeId];
                   return Container(
@@ -1183,6 +1198,7 @@ class _MismatchSection extends StatefulWidget {
 }
 
 class _MismatchSectionState extends State<_MismatchSection> {
+  late final Stream<List<KasaPriceMismatch>> _openStream = widget.repo.watchOpenMismatches();
   bool _includeResolved = false;
   Future<List<KasaPriceMismatch>>? _resolvedFuture;
 
@@ -1229,7 +1245,7 @@ class _MismatchSectionState extends State<_MismatchSection> {
           )
         else
           StreamBuilder<List<KasaPriceMismatch>>(
-            stream: widget.repo.watchOpenMismatches(),
+            stream: _openStream,
             builder: (context, snap) {
               if (!snap.hasData) {
                 return const Padding(padding: EdgeInsets.symmetric(vertical: 40), child: Center(child: CircularProgressIndicator()));
