@@ -467,7 +467,12 @@ per‑device display name under the same shared auth account.
   (`width ?? flex * 108`). Desktop is unchanged (columns still `Expanded`).
 - İstatistik top bar: the freshness chip moves below the tab row on mobile.
 
-Dart‑only → ships as a **`shorebird patch` on `1.9.7+2030`**.
+Intended as a `shorebird patch` on `1.9.7`, but **the patch was rejected** —
+the new Material icons (`Icons.insights`, `Icons.lock_outline`, …) change the
+tree‑shaken `MaterialIcons-Regular.otf` subset, and Shorebird patches don't carry
+asset changes. So it went into a **full release `1.9.8+2031`** instead (1.9.7 was
+never distributed, so nothing lost). New‑icon Dart changes always need a full
+release, not a patch — worth remembering.
 
 ---
 
