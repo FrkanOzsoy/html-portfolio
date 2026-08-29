@@ -374,6 +374,9 @@ class KasaReceipt {
   final bool isVoid;
   final String? note;
   final int? lineCount;
+  /// Card scheme(s) used on this receipt: 'Visa' / 'Mastercard' / 'Troy' /
+  /// 'Amex' / 'Karışık' / 'Kart' (unresolved), or null for a cash-only receipt.
+  final String? cardBrand;
 
   KasaReceipt({
     required this.id,
@@ -395,6 +398,7 @@ class KasaReceipt {
     this.isVoid = false,
     this.note,
     this.lineCount,
+    this.cardBrand,
   });
 
   factory KasaReceipt.fromJson(Map<String, dynamic> j) => KasaReceipt(
@@ -417,10 +421,21 @@ class KasaReceipt {
         isVoid: j['is_void'] as bool? ?? false,
         note: (j['note'] as String?)?.trim().isNotEmpty == true ? (j['note'] as String).trim() : null,
         lineCount: (j['line_count'] as num?)?.toInt(),
+        cardBrand: (j['card_brand'] as String?)?.trim().isNotEmpty == true ? (j['card_brand'] as String).trim() : null,
       );
 
   /// FIS = normal sale receipt; ZRP/XRP are report documents.
   bool get isSale => receiptType == null || receiptType == 'FIS';
+
+  /// A meaningful payment label: cash / card (+ brand) / mixed.
+  String get paymentLabel {
+    final cash = cashTotal ?? 0;
+    final card = cardTotal ?? 0;
+    if (cash > 0 && card > 0) return 'Karışık';
+    if (card > 0) return cardBrand == null || cardBrand == 'Kart' ? 'Kart' : 'Kart · $cardBrand';
+    if (cash > 0) return 'Nakit';
+    return '-';
+  }
 }
 
 /// One line of a till receipt (HAREKET). `name` is usually null in the
@@ -490,6 +505,14 @@ class KasaPayment {
   final String? method;
   final num? amount;
   final num? paidAmount;
+  final String? cardScheme;   // Visa / Mastercard / Troy / ...
+  final String? maskedPan;    // 456354******6975
+  final int? installments;    // >1 only
+  final String? authCode;     // Onay_No
+  final String? refNo;
+  final int? batchNo;
+  final String? terminalNo;
+  final String? buttonLabel;  // POS_KREDI button (e.g. "KREDİ KARTI")
 
   KasaPayment({
     required this.odemeId,
@@ -498,6 +521,14 @@ class KasaPayment {
     this.method,
     this.amount,
     this.paidAmount,
+    this.cardScheme,
+    this.maskedPan,
+    this.installments,
+    this.authCode,
+    this.refNo,
+    this.batchNo,
+    this.terminalNo,
+    this.buttonLabel,
   });
 
   factory KasaPayment.fromJson(Map<String, dynamic> j) => KasaPayment(
@@ -507,13 +538,25 @@ class KasaPayment {
         method: (j['method'] as String?)?.trim(),
         amount: j['amount'] as num?,
         paidAmount: j['paid_amount'] as num?,
+        cardScheme: (j['card_scheme'] as String?)?.trim().isNotEmpty == true ? (j['card_scheme'] as String).trim() : null,
+        maskedPan: (j['masked_pan'] as String?)?.trim().isNotEmpty == true ? (j['masked_pan'] as String).trim() : null,
+        installments: (j['installments'] as num?)?.toInt(),
+        authCode: (j['auth_code'] as String?)?.trim().isNotEmpty == true ? (j['auth_code'] as String).trim() : null,
+        refNo: (j['ref_no'] as String?)?.trim().isNotEmpty == true ? (j['ref_no'] as String).trim() : null,
+        batchNo: (j['batch_no'] as num?)?.toInt(),
+        terminalNo: (j['terminal_no'] as String?)?.trim().isNotEmpty == true ? (j['terminal_no'] as String).trim() : null,
+        buttonLabel: (j['button_label'] as String?)?.trim().isNotEmpty == true ? (j['button_label'] as String).trim() : null,
       );
 
-  String get methodLabel => switch (method) {
-        'nakit' => 'Nakit',
-        'kart' => 'Kart',
-        _ => 'Diğer',
-      };
+  bool get isCard => method == 'kart' || cardScheme != null || maskedPan != null;
+
+  String get methodLabel {
+    if (isCard) return cardScheme == null ? 'Kart' : 'Kart · $cardScheme';
+    return switch (method) {
+      'nakit' => 'Nakit',
+      _ => buttonLabel ?? 'Diğer',
+    };
+  }
 }
 
 /// A daily Z report row (SERVER_ZREPORT). [turnover] is the register's own
@@ -691,6 +734,7 @@ class KasaDaySummary {
   final num discount;
   final num itemsSold;     // sum of line qty across non-void receipts
   final List<num> byHour;  // length 24, turnover per hour
+  final Map<String, num> cardByBrand; // 'Visa' -> total, etc. (non-void card receipts)
 
   KasaDaySummary({
     required this.day,
@@ -703,6 +747,7 @@ class KasaDaySummary {
     required this.discount,
     required this.itemsSold,
     required this.byHour,
+    this.cardByBrand = const {},
   });
 
   num get avgBasket => receiptCount == 0 ? 0 : gross / receiptCount;

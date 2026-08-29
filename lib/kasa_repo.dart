@@ -20,7 +20,7 @@ class KasaRepo {
   static const _receiptCols =
       'id, belge_id, register_no, cashier_no, receipt_type, receipt_no, sold_at, '
       'closed_at, z_no, subtotal, vat_total, total, cash_total, card_total, '
-      'discount_total, cancel_total, is_void, note, line_count';
+      'discount_total, cancel_total, is_void, note, line_count, card_brand';
 
   // ---- Son İşlemler: live receipt feed --------------------------------------
 
@@ -140,7 +140,7 @@ class KasaRepo {
     final end = start.add(const Duration(days: 1));
     final rows = await _client
         .from('kasa_receipts')
-        .select('total, cash_total, card_total, discount_total, is_void, receipt_type, sold_at, line_count')
+        .select('total, cash_total, card_total, discount_total, is_void, receipt_type, sold_at, line_count, card_brand')
         .eq('receipt_type', 'FIS')
         .gte('sold_at', start.toUtc().toIso8601String())
         .lt('sold_at', end.toUtc().toIso8601String())
@@ -151,6 +151,7 @@ class KasaRepo {
     var receiptCount = 0, voidCount = 0;
     num gross = 0, voidValue = 0, cash = 0, card = 0, discount = 0, items = 0;
     final byHour = List<num>.filled(24, 0);
+    final cardByBrand = <String, num>{};
 
     for (final r in rows) {
       final isVoid = r['is_void'] as bool? ?? false;
@@ -163,11 +164,17 @@ class KasaRepo {
       receiptCount++;
       gross += total;
       cash += (r['cash_total'] as num?) ?? 0;
-      card += (r['card_total'] as num?) ?? 0;
+      final cardT = (r['card_total'] as num?) ?? 0;
+      card += cardT;
       discount += (r['discount_total'] as num?) ?? 0;
       items += (r['line_count'] as num?) ?? 0;
       final h = DateTime.parse(r['sold_at'] as String).toLocal().hour;
       if (h >= 0 && h < 24) byHour[h] += total;
+      if (cardT > 0) {
+        final brand = (r['card_brand'] as String?)?.trim();
+        final key = (brand == null || brand.isEmpty) ? 'Kart' : brand;
+        cardByBrand[key] = (cardByBrand[key] ?? 0) + cardT;
+      }
     }
 
     return KasaDaySummary(
@@ -181,6 +188,7 @@ class KasaRepo {
       discount: discount,
       itemsSold: items,
       byHour: byHour,
+      cardByBrand: cardByBrand,
     );
   }
 

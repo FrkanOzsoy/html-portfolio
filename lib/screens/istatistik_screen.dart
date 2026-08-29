@@ -160,16 +160,6 @@ String _qty(num? q) {
   return q == q.roundToDouble() ? q.toStringAsFixed(0) : q.toStringAsFixed(3);
 }
 
-/// A meaningful payment label for a receipt: the mix of its own cash/card
-/// totals rather than a raw tender code.
-String _payLabel(KasaReceipt r) {
-  final cash = r.cashTotal ?? 0;
-  final card = r.cardTotal ?? 0;
-  if (cash > 0 && card > 0) return 'Karışık';
-  if (card > 0) return 'Kart';
-  if (cash > 0) return 'Nakit';
-  return '-';
-}
 
 class _CountPill extends StatelessWidget {
   final int count;
@@ -199,6 +189,36 @@ class _Badge extends StatelessWidget {
         child: Text(text,
             style: TextStyle(color: color, fontSize: 11, fontWeight: FontWeight.w700)),
       );
+}
+
+/// Payment summary for a receipt row: "Nakit" / "Kart · Visa" / "Karışık".
+class _PayChip extends StatelessWidget {
+  final KasaReceipt receipt;
+  const _PayChip(this.receipt);
+
+  @override
+  Widget build(BuildContext context) {
+    final cash = receipt.cashTotal ?? 0;
+    final card = receipt.cardTotal ?? 0;
+    final mixed = cash > 0 && card > 0;
+    final isCard = card > 0 && !mixed;
+    final color = mixed ? AppColors.mustard : (isCard ? AppColors.brown600 : AppColors.success);
+    if (cash == 0 && card == 0) return const Text('-', style: TextStyle(color: AppColors.brown300));
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Icon(isCard ? Icons.credit_card : (mixed ? Icons.account_balance_wallet_outlined : Icons.payments_outlined),
+            size: 13, color: color),
+        const SizedBox(width: 5),
+        Flexible(
+          child: Text(receipt.paymentLabel,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(fontSize: 12, color: color, fontWeight: FontWeight.w600)),
+        ),
+      ],
+    );
+  }
 }
 
 class _FreshnessChip extends StatelessWidget {
@@ -472,9 +492,9 @@ class _ReceiptsSectionState extends State<_ReceiptsSection> {
                 ),
                 SortColumn(
                   label: 'Ödeme',
-                  width: 84,
-                  sortKey: (r) => _payLabel(r),
-                  cell: (r) => Text(_payLabel(r)),
+                  width: 150,
+                  sortKey: (r) => r.paymentLabel,
+                  cell: (r) => _PayChip(r),
                 ),
                 SortColumn(
                   label: 'Ürün',
@@ -482,16 +502,6 @@ class _ReceiptsSectionState extends State<_ReceiptsSection> {
                   numeric: true,
                   sortKey: (r) => r.lineCount ?? 0,
                   cell: (r) => Text('${r.lineCount ?? '-'}'),
-                ),
-                SortColumn(
-                  label: 'İndirim',
-                  width: 92,
-                  numeric: true,
-                  sortKey: (r) => r.discountTotal ?? 0,
-                  cell: (r) => Text(
-                    (r.discountTotal ?? 0) > 0 ? formatPrice(r.discountTotal) : '-',
-                    style: TextStyle(color: (r.discountTotal ?? 0) > 0 ? AppColors.mustard : AppColors.brown400),
-                  ),
                 ),
                 _noteColumn(widget.repo, widget.notes),
                 SortColumn(
@@ -712,18 +722,7 @@ class _ReceiptDetailSheetState extends State<_ReceiptDetailSheet> {
                   const SizedBox(height: 16),
                   const Text('Ödemeler', style: TextStyle(fontWeight: FontWeight.bold, color: AppColors.brown800)),
                   const SizedBox(height: 8),
-                  for (final p in snap.data!.payments)
-                    Padding(
-                      padding: const EdgeInsets.symmetric(vertical: 3),
-                      child: Row(
-                        children: [
-                          _Badge(p.methodLabel, p.method == 'kart' ? AppColors.brown600 : AppColors.success),
-                          const Spacer(),
-                          Text(formatPrice(p.amount),
-                              style: const TextStyle(fontWeight: FontWeight.w700, color: AppColors.brown900)),
-                        ],
-                      ),
-                    ),
+                  for (final p in snap.data!.payments) _PaymentRow(p),
                 ],
               ],
             ],
@@ -741,6 +740,52 @@ class _ReceiptDetailSheetState extends State<_ReceiptDetailSheet> {
           Text(v, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w700, color: AppColors.brown900)),
         ],
       );
+}
+
+/// One payment line in the receipt detail sheet -- for a card payment, shows
+/// the masked PAN, scheme, installments, auth code, terminal + batch.
+class _PaymentRow extends StatelessWidget {
+  final KasaPayment p;
+  const _PaymentRow(this.p);
+
+  @override
+  Widget build(BuildContext context) {
+    final bits = <String>[
+      if (p.maskedPan != null) p.maskedPan!,
+      if ((p.installments ?? 0) > 1) '${p.installments} taksit',
+      if (p.authCode != null) 'onay ${p.authCode}',
+      if (p.terminalNo != null) 'term. ${p.terminalNo}',
+      if (p.batchNo != null) 'batch ${p.batchNo}',
+    ];
+    return Container(
+      margin: const EdgeInsets.symmetric(vertical: 3),
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+      decoration: BoxDecoration(
+        color: AppColors.creamCard,
+        borderRadius: BorderRadius.circular(AppRadius.chip),
+        border: Border.all(color: AppColors.creamBorder),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              _Badge(p.methodLabel, p.isCard ? AppColors.brown600 : AppColors.success),
+              const Spacer(),
+              Text(formatPrice(p.amount),
+                  style: const TextStyle(fontWeight: FontWeight.w700, color: AppColors.brown900)),
+            ],
+          ),
+          if (bits.isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.only(top: 4),
+              child: Text(bits.join('  ·  '),
+                  style: const TextStyle(fontSize: 11, color: AppColors.brown500, fontFeatures: [FontFeature.tabularFigures()])),
+            ),
+        ],
+      ),
+    );
+  }
 }
 
 // ===========================================================================
@@ -856,6 +901,15 @@ class _DaySummarySectionState extends State<_DaySummarySection> {
                         color: s.voidCount > 0 ? AppColors.terracotta : null),
                   ],
                 ),
+                if (s.cardByBrand.isNotEmpty) ...[
+                  const SizedBox(height: 22),
+                  const Text('Kart Dağılımı', style: TextStyle(fontWeight: FontWeight.bold, color: AppColors.brown800)),
+                  const SizedBox(height: 4),
+                  Text('Toplam kart: ${formatPrice(s.card)}',
+                      style: const TextStyle(color: AppColors.brown500, fontSize: 12)),
+                  const SizedBox(height: 10),
+                  _CardBrandBreakdown(cardByBrand: s.cardByBrand, cardTotal: s.card),
+                ],
                 const SizedBox(height: 22),
                 const Text('Saatlik Ciro', style: TextStyle(fontWeight: FontWeight.bold, color: AppColors.brown800)),
                 const SizedBox(height: 10),
@@ -935,6 +989,67 @@ class _Metric extends StatelessWidget {
                   color: color ?? AppColors.brown900)),
         ],
       ),
+    );
+  }
+}
+
+/// Horizontal split-bar of card turnover by scheme (Visa / Mastercard / Troy…).
+class _CardBrandBreakdown extends StatelessWidget {
+  final Map<String, num> cardByBrand;
+  final num cardTotal;
+  const _CardBrandBreakdown({required this.cardByBrand, required this.cardTotal});
+
+  static const _brandColor = {
+    'Visa': Color(0xFF4A6FA5),
+    'Mastercard': Color(0xFFB5502F),
+    'Troy': Color(0xFF3E8E9E),
+    'Amex': Color(0xFF6B4E8E),
+    'Diners': Color(0xFF9E6B8E),
+    'UnionPay': Color(0xFF7B6BA5),
+    'Karışık': AppColors.mustard,
+    'Kart': AppColors.brown400,
+  };
+
+  @override
+  Widget build(BuildContext context) {
+    final entries = cardByBrand.entries.toList()..sort((a, b) => b.value.compareTo(a.value));
+    final total = cardTotal == 0 ? 1 : cardTotal;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        ClipRRect(
+          borderRadius: BorderRadius.circular(4),
+          child: Row(
+            children: [
+              for (final e in entries)
+                Expanded(
+                  flex: ((e.value / total) * 1000).round().clamp(1, 1000),
+                  child: Container(height: 14, color: _brandColor[e.key] ?? AppColors.brown300),
+                ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 10),
+        Wrap(
+          spacing: 16,
+          runSpacing: 6,
+          children: [
+            for (final e in entries)
+              Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Container(width: 10, height: 10, decoration: BoxDecoration(
+                      color: _brandColor[e.key] ?? AppColors.brown300, borderRadius: BorderRadius.circular(2))),
+                  const SizedBox(width: 6),
+                  Text('${e.key}  ',
+                      style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w600, color: AppColors.brown800)),
+                  Text('${formatPrice(e.value)} · %${(e.value / total * 100).toStringAsFixed(0)}',
+                      style: const TextStyle(fontSize: 12, color: AppColors.brown500)),
+                ],
+              ),
+          ],
+        ),
+      ],
     );
   }
 }
