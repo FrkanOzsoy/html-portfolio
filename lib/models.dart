@@ -650,6 +650,54 @@ class KasaDeadStockItem {
       );
 }
 
+/// A row from kasa_product_sales_report RPC — one catalog product with its
+/// aggregated sales over a user-selected date range, plus its all-time
+/// last-sale info from the full PSD window (~450 days).
+class KasaProductSalesReport {
+  final String barcode;
+  final String stockname;
+  final num? price;
+  final String? depno;
+  final String? stockunit;
+  final num? kdvRate;
+  final num qty;
+  final num revenue;
+  final int lineCount;
+  final DateTime? lastSoldAt;
+  final int? daysSince;
+
+  KasaProductSalesReport({
+    required this.barcode,
+    required this.stockname,
+    this.price,
+    this.depno,
+    this.stockunit,
+    this.kdvRate,
+    this.qty = 0,
+    this.revenue = 0,
+    this.lineCount = 0,
+    this.lastSoldAt,
+    this.daysSince,
+  });
+
+  factory KasaProductSalesReport.fromJson(Map<String, dynamic> j) =>
+      KasaProductSalesReport(
+        barcode: j['barcode'] as String,
+        stockname: (j['stockname'] as String?) ?? '',
+        price: j['price'] as num?,
+        depno: j['depno'] as String?,
+        stockunit: j['stockunit'] as String?,
+        kdvRate: j['kdv_rate'] as num?,
+        qty: (j['qty'] as num?) ?? 0,
+        revenue: (j['revenue'] as num?) ?? 0,
+        lineCount: ((j['line_count'] as num?) ?? 0).toInt(),
+        lastSoldAt: j['last_sold_at'] != null
+            ? DateTime.parse(j['last_sold_at'] as String)
+            : null,
+        daysSince: (j['days_since'] as num?)?.toInt(),
+      );
+}
+
 /// A detected price mismatch (kasa_price_mismatches): the till charged
 /// [tillPrice] for [barcode] while the catalog said [catalogPrice].
 class KasaPriceMismatch {

@@ -113,7 +113,7 @@ class _MobileIstatistikGateState extends State<MobileIstatistikGate> {
 /// live sales, mirrored from INTER_BOS by the till-PC daemon (see
 /// lib/kasa_repo.dart). Six sections, each with fully sortable tables:
 ///   Son İşlemler · Günlük Özet · İptaller · Fiyat Uyuşmazlığı ·
-///   Z Raporları · Ölü Stok
+///   Z Raporları · Ürün Satışları
 class IstatistikScreen extends StatefulWidget {
   const IstatistikScreen({super.key});
 
@@ -199,7 +199,7 @@ class _IstatistikScreenState extends State<IstatistikScreen> with SingleTickerPr
                             ),
                           ),
                           const Tab(text: 'Z Raporları'),
-                          const Tab(text: 'Ölü Stok'),
+                          const Tab(text: 'Ürün Satışları'),
                         ],
                       ),
                     ),
@@ -213,10 +213,10 @@ class _IstatistikScreenState extends State<IstatistikScreen> with SingleTickerPr
                   Padding(
                     padding: const EdgeInsets.fromLTRB(16, 0, 16, 6),
                     child: Align(
-                      alignment: Alignment.centerRight,
-                      child: _FreshnessChip(at: _lastMirroredAt),
-                    ),
+                    alignment: Alignment.centerRight,
+                    child: _FreshnessChip(at: _lastMirroredAt),
                   ),
+                ),
               ],
             ),
           ),
@@ -229,7 +229,7 @@ class _IstatistikScreenState extends State<IstatistikScreen> with SingleTickerPr
                 _VoidsSection(repo: _repo, notes: _notes),
                 _MismatchSection(repo: _repo),
                 _ZReportsSection(repo: _repo),
-                _DeadStockSection(repo: _repo),
+                _UrunSatislariSection(repo: _repo),
               ],
             ),
           ),
@@ -1691,89 +1691,432 @@ class _ZReportSheet extends StatelessWidget {
 }
 
 // ===========================================================================
-// 6. Ölü Stok
+// 6. Ürün Satışları (eski Ölü Stok dahil genel satış raporu)
 // ===========================================================================
 
-class _DeadStockSection extends StatefulWidget {
-  final KasaRepo repo;
-  const _DeadStockSection({required this.repo});
-
-  @override
-  State<_DeadStockSection> createState() => _DeadStockSectionState();
+enum _SalesTimelinePreset {
+  today,
+  last7,
+  last30,
+  last90,
+  thisMonth,
+  lastMonth,
+  custom,
 }
 
-class _DeadStockSectionState extends State<_DeadStockSection> {
-  int _days = 30;
-  bool _requireHistory = true;
-  late Future<List<KasaDeadStockItem>> _future = _load();
+enum _SalesStatusFilter {
+  all,
+  soldOnly,
+  unsoldOnly,
+}
 
-  Future<List<KasaDeadStockItem>> _load() =>
-      widget.repo.getDeadStock(days: _days, requireHistory: _requireHistory);
+class _UrunSatislariSection extends StatefulWidget {
+  final KasaRepo repo;
+  const _UrunSatislariSection({required this.repo});
+
+  @override
+  State<_UrunSatislariSection> createState() => _UrunSatislariSectionState();
+}
+
+class _UrunSatislariSectionState extends State<_UrunSatislariSection> {
+  _SalesTimelinePreset _preset = _SalesTimelinePreset.last30;
+  late DateTime _from;
+  late DateTime _to;
+
+  String? _selectedDepno;
+  List<String> _availableDepnos = const [];
+  _SalesStatusFilter _statusFilter = _SalesStatusFilter.all;
+  bool _requireEverSold = false; // "Geçmişte satılmış" (unsoldOnly modunda)
+  final _searchController = TextEditingController();
+  String _searchQuery = '';
+
+  late Future<List<KasaProductSalesReport>> _future;
+
+  @override
+  void initState() {
+    super.initState();
+    _computeDatesForPreset(_preset);
+    _future = _load();
+    _loadDepnos();
+  }
+
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
+  }
+
+  void _computeDatesForPreset(_SalesTimelinePreset preset) {
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    switch (preset) {
+      case _SalesTimelinePreset.today:
+        _from = today;
+        _to = today;
+        break;
+      case _SalesTimelinePreset.last7:
+        _from = today.subtract(const Duration(days: 6));
+        _to = today;
+        break;
+      case _SalesTimelinePreset.last30:
+        _from = today.subtract(const Duration(days: 29));
+        _to = today;
+        break;
+      case _SalesTimelinePreset.last90:
+        _from = today.subtract(const Duration(days: 89));
+        _to = today;
+        break;
+      case _SalesTimelinePreset.thisMonth:
+        _from = DateTime(now.year, now.month, 1);
+        _to = today;
+        break;
+      case _SalesTimelinePreset.lastMonth:
+        final firstOfThisMonth = DateTime(now.year, now.month, 1);
+        final lastOfPrevMonth = firstOfThisMonth.subtract(const Duration(days: 1));
+        _from = DateTime(lastOfPrevMonth.year, lastOfPrevMonth.month, 1);
+        _to = lastOfPrevMonth;
+        break;
+      case _SalesTimelinePreset.custom:
+        break;
+    }
+  }
+
+  Future<void> _loadDepnos() async {
+    final depnos = await widget.repo.getDistinctDepnos();
+    if (mounted) setState(() => _availableDepnos = depnos);
+  }
+
+  Future<List<KasaProductSalesReport>> _load() {
+    return widget.repo.getProductSalesReport(
+      from: _from,
+      to: _to,
+      depno: _selectedDepno,
+      includeUnsold: true,
+      limit: 1000,
+    );
+  }
 
   void _reload() => setState(() => _future = _load());
+
+  Future<void> _pickCustomRange() async {
+    final now = DateTime.now();
+    final initial = DateTimeRange(
+      start: _from.isAfter(now) ? now : _from,
+      end: _to.isAfter(now) ? now : _to,
+    );
+    final picked = await showDateRangePicker(
+      context: context,
+      firstDate: now.subtract(const Duration(days: 450)),
+      lastDate: now,
+      initialDateRange: initial,
+      helpText: 'Tarih Aralığı Seçin',
+      cancelText: 'Vazgeç',
+      confirmText: 'Uygula',
+      saveText: 'Uygula',
+    );
+    if (picked != null) {
+      setState(() {
+        _preset = _SalesTimelinePreset.custom;
+        _from = picked.start;
+        _to = picked.end;
+        _future = _load();
+      });
+    }
+  }
+
+  List<KasaProductSalesReport> _filterRows(List<KasaProductSalesReport> all) {
+    var list = all;
+
+    if (_statusFilter == _SalesStatusFilter.soldOnly) {
+      list = list.where((r) => r.qty > 0).toList();
+    } else if (_statusFilter == _SalesStatusFilter.unsoldOnly) {
+      list = list.where((r) => r.qty == 0).toList();
+      if (_requireEverSold) {
+        list = list.where((r) => r.lastSoldAt != null).toList();
+      }
+    }
+
+    if (_searchQuery.isNotEmpty) {
+      final q = _searchQuery.toLowerCase();
+      list = list.where((r) =>
+          r.stockname.toLowerCase().contains(q) ||
+          r.barcode.toLowerCase().contains(q)).toList();
+    }
+
+    return list;
+  }
+
+  String _presetLabel(_SalesTimelinePreset p) => switch (p) {
+        _SalesTimelinePreset.today => 'Bugün',
+        _SalesTimelinePreset.last7 => 'Son 7 gün',
+        _SalesTimelinePreset.last30 => 'Son 30 gün',
+        _SalesTimelinePreset.last90 => 'Son 90 gün',
+        _SalesTimelinePreset.thisMonth => 'Bu Ay',
+        _SalesTimelinePreset.lastMonth => 'Geçen Ay',
+        _SalesTimelinePreset.custom =>
+          '${_dm(_from)} - ${_dm(_to)}',
+      };
 
   @override
   Widget build(BuildContext context) {
     return ListView(
       padding: const EdgeInsets.fromLTRB(16, 14, 16, 24),
       children: [
-        const Text(
-          'Son X gün içinde kasada hiç satılmayan katalog ürünleri. '
-          '"Geçmişte satılmış" seçiliyken yalnızca eskiden satan ama artık durmuş ürünler gösterilir.',
-          style: TextStyle(color: AppColors.brown500, fontSize: 12.5, height: 1.4),
-        ),
-        const SizedBox(height: 12),
-        Row(
+        // 1. Timeline presets row
+        Wrap(
+          spacing: 6,
+          runSpacing: 6,
+          crossAxisAlignment: WrapCrossAlignment.center,
           children: [
-            const Text('Satış yok:', style: TextStyle(color: AppColors.brown500, fontSize: 12.5)),
-            const SizedBox(width: 8),
-            for (final d in const [14, 30, 60, 90]) ...[
+            const Text('Zaman:',
+                style: TextStyle(
+                    color: AppColors.brown600,
+                    fontWeight: FontWeight.w600,
+                    fontSize: 12.5)),
+            for (final p in [
+              _SalesTimelinePreset.today,
+              _SalesTimelinePreset.last7,
+              _SalesTimelinePreset.last30,
+              _SalesTimelinePreset.last90,
+              _SalesTimelinePreset.thisMonth,
+              _SalesTimelinePreset.lastMonth,
+            ])
               ChoiceChip(
-                label: Text('$d g'),
-                selected: _days == d,
+                label: Text(_presetLabel(p)),
+                selected: _preset == p,
                 onSelected: (_) {
-                  _days = d;
-                  _reload();
+                  setState(() {
+                    _preset = p;
+                    _computeDatesForPreset(p);
+                    _reload();
+                  });
                 },
                 selectedColor: AppColors.terracotta,
                 labelStyle: TextStyle(
-                    color: _days == d ? Colors.white : AppColors.brown700, fontWeight: FontWeight.w600, fontSize: 12),
+                  color: _preset == p ? Colors.white : AppColors.brown700,
+                  fontWeight: FontWeight.w600,
+                  fontSize: 12,
+                ),
                 backgroundColor: AppColors.brown100,
               ),
-              const SizedBox(width: 6),
-            ],
-            const SizedBox(width: 10),
-            FilterChip(
-              label: const Text('Geçmişte satılmış'),
-              selected: _requireHistory,
-              onSelected: (v) {
-                _requireHistory = v;
-                _reload();
-              },
-              selectedColor: AppColors.brown200,
-              labelStyle: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
+            ActionChip(
+              avatar: const Icon(Icons.date_range, size: 14, color: AppColors.brown700),
+              label: Text(
+                _preset == _SalesTimelinePreset.custom
+                    ? _presetLabel(_SalesTimelinePreset.custom)
+                    : 'Özel Aralık...',
+              ),
+              onPressed: _pickCustomRange,
+              backgroundColor: _preset == _SalesTimelinePreset.custom
+                  ? AppColors.terracotta
+                  : AppColors.brown100,
+              labelStyle: TextStyle(
+                color: _preset == _SalesTimelinePreset.custom
+                    ? Colors.white
+                    : AppColors.brown700,
+                fontWeight: FontWeight.w600,
+                fontSize: 12,
+              ),
             ),
           ],
         ),
-        const SizedBox(height: 14),
-        FutureBuilder<List<KasaDeadStockItem>>(
+        const SizedBox(height: 10),
+
+        // 2. Filters row: Reyon / Durum / Arama
+        Wrap(
+          spacing: 10,
+          runSpacing: 8,
+          crossAxisAlignment: WrapCrossAlignment.center,
+          children: [
+            // Reyon Dropdown
+            Container(
+              height: 36,
+              padding: const EdgeInsets.symmetric(horizontal: 10),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(AppRadius.chip),
+                border: Border.all(color: AppColors.creamBorder),
+              ),
+              child: DropdownButtonHideUnderline(
+                child: DropdownButton<String?>(
+                  value: _selectedDepno,
+                  hint: const Text('Tüm Reyonlar',
+                      style: TextStyle(fontSize: 12, color: AppColors.brown600, fontWeight: FontWeight.w600)),
+                  icon: const Icon(Icons.arrow_drop_down, color: AppColors.brown600, size: 18),
+                  style: const TextStyle(fontSize: 12, color: AppColors.brown900, fontWeight: FontWeight.w600),
+                  items: [
+                    const DropdownMenuItem<String?>(
+                      value: null,
+                      child: Text('Tüm Reyonlar (KDV)', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600)),
+                    ),
+                    for (final d in _availableDepnos)
+                      DropdownMenuItem<String?>(
+                        value: d,
+                        child: Text(d, style: const TextStyle(fontSize: 12)),
+                      ),
+                  ],
+                  onChanged: (v) {
+                    setState(() {
+                      _selectedDepno = v;
+                      _reload();
+                    });
+                  },
+                ),
+              ),
+            ),
+
+            // Satış Durumu ChoiceChips
+            ChoiceChip(
+              label: const Text('Tümü'),
+              selected: _statusFilter == _SalesStatusFilter.all,
+              onSelected: (_) => setState(() => _statusFilter = _SalesStatusFilter.all),
+              selectedColor: AppColors.brown700,
+              labelStyle: TextStyle(
+                color: _statusFilter == _SalesStatusFilter.all ? Colors.white : AppColors.brown700,
+                fontSize: 11.5,
+                fontWeight: FontWeight.w600,
+              ),
+              backgroundColor: AppColors.brown100,
+            ),
+            ChoiceChip(
+              label: const Text('Satılanlar'),
+              selected: _statusFilter == _SalesStatusFilter.soldOnly,
+              onSelected: (_) => setState(() => _statusFilter = _SalesStatusFilter.soldOnly),
+              selectedColor: AppColors.success,
+              labelStyle: TextStyle(
+                color: _statusFilter == _SalesStatusFilter.soldOnly ? Colors.white : AppColors.brown700,
+                fontSize: 11.5,
+                fontWeight: FontWeight.w600,
+              ),
+              backgroundColor: AppColors.brown100,
+            ),
+            ChoiceChip(
+              label: const Text('Satılmayanlar (Ölü Stok)'),
+              selected: _statusFilter == _SalesStatusFilter.unsoldOnly,
+              onSelected: (_) => setState(() => _statusFilter = _SalesStatusFilter.unsoldOnly),
+              selectedColor: AppColors.terracotta,
+              labelStyle: TextStyle(
+                color: _statusFilter == _SalesStatusFilter.unsoldOnly ? Colors.white : AppColors.brown700,
+                fontSize: 11.5,
+                fontWeight: FontWeight.w600,
+              ),
+              backgroundColor: AppColors.brown100,
+            ),
+
+            if (_statusFilter == _SalesStatusFilter.unsoldOnly)
+              FilterChip(
+                label: const Text('Geçmişte satılmış'),
+                selected: _requireEverSold,
+                onSelected: (v) => setState(() => _requireEverSold = v),
+                selectedColor: AppColors.brown200,
+                labelStyle: const TextStyle(fontSize: 11.5, fontWeight: FontWeight.w600),
+              ),
+
+            // Search filter field
+            SizedBox(
+              width: 180,
+              height: 36,
+              child: TextField(
+                controller: _searchController,
+                style: const TextStyle(fontSize: 12),
+                decoration: InputDecoration(
+                  hintText: 'Ürün veya barkod ara...',
+                  hintStyle: const TextStyle(fontSize: 11.5, color: AppColors.brown400),
+                  isDense: true,
+                  prefixIcon: const Icon(Icons.search, size: 16, color: AppColors.brown500),
+                  suffixIcon: _searchQuery.isNotEmpty
+                      ? IconButton(
+                          icon: const Icon(Icons.clear, size: 14),
+                          onPressed: () {
+                            _searchController.clear();
+                            setState(() => _searchQuery = '');
+                          },
+                        )
+                      : null,
+                  contentPadding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+                  filled: true,
+                  fillColor: Colors.white,
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(AppRadius.chip),
+                    borderSide: const BorderSide(color: AppColors.creamBorder),
+                  ),
+                  enabledBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(AppRadius.chip),
+                    borderSide: const BorderSide(color: AppColors.creamBorder),
+                  ),
+                ),
+                onChanged: (v) => setState(() => _searchQuery = v.trim()),
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 12),
+
+        // 3. Table with data
+        FutureBuilder<List<KasaProductSalesReport>>(
           future: _future,
           builder: (context, snap) {
             if (!snap.hasData) {
-              return const Padding(padding: EdgeInsets.symmetric(vertical: 50), child: Center(child: CircularProgressIndicator()));
+              return const Padding(
+                padding: EdgeInsets.symmetric(vertical: 50),
+                child: Center(child: CircularProgressIndicator()),
+              );
             }
-            final rows = snap.data!;
+
+            final all = snap.data!;
+            final rows = _filterRows(all);
+
+            num totalQty = 0;
+            num totalRevenue = 0;
+            int totalLines = 0;
+            for (final r in rows) {
+              totalQty += r.qty;
+              totalRevenue += r.revenue;
+              totalLines += r.lineCount;
+            }
+
             return Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                Text('${rows.length} ürün',
-                    style: const TextStyle(color: AppColors.brown600, fontSize: 12.5, fontWeight: FontWeight.w600)),
+                // Summary bar
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                  decoration: BoxDecoration(
+                    color: AppColors.creamCard,
+                    borderRadius: BorderRadius.circular(AppRadius.box),
+                    border: Border.all(color: AppColors.creamBorder),
+                  ),
+                  child: Wrap(
+                    alignment: WrapAlignment.spaceBetween,
+                    crossAxisAlignment: WrapCrossAlignment.center,
+                    children: [
+                      Text(
+                        '${rows.length} ürün listeleniyor'
+                        '${rows.length != all.length ? ' (${all.length} toplam)' : ''}',
+                        style: const TextStyle(
+                          color: AppColors.brown800,
+                          fontSize: 12.5,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                      Text(
+                        'Toplam: ${_qty(totalQty)} adet  ·  ${formatPrice(totalRevenue)}  ·  $totalLines işlem',
+                        style: const TextStyle(
+                          color: AppColors.terracotta,
+                          fontSize: 12.5,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
                 const SizedBox(height: 10),
-                SortableTable<KasaDeadStockItem>(
+
+                SortableTable<KasaProductSalesReport>(
                   rows: rows,
-                  initialSortColumn: 4, // last sold
+                  initialSortColumn: 4, // Ciro (revenue) desc
                   initialAscending: false,
-                  emptyText: 'Bu ölçüte uyan ürün yok.',
+                  emptyText: 'Seçili filtrelere uyan ürün kaydı bulunamadı.',
                   onRowTap: (d) => _peekProduct(context, d.barcode),
                   columns: [
                     SortColumn(
@@ -1783,42 +2126,95 @@ class _DeadStockSectionState extends State<_DeadStockSection> {
                       cell: (d) => Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          Text(d.stockname, maxLines: 1, overflow: TextOverflow.ellipsis,
-                              style: const TextStyle(fontWeight: FontWeight.w600)),
-                          Text(d.barcode, style: const TextStyle(fontSize: 10.5, color: AppColors.brown400)),
+                          Text(
+                            d.stockname.isEmpty ? '-' : d.stockname,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(fontWeight: FontWeight.w600),
+                          ),
+                          Text(d.barcode,
+                              style: const TextStyle(
+                                  fontSize: 10.5, color: AppColors.brown400)),
                         ],
                       ),
                     ),
                     SortColumn(
                       label: 'Fiyat',
-                      width: 92,
+                      width: 88,
                       numeric: true,
                       sortKey: (d) => d.price ?? 0,
                       cell: (d) => Text(formatPrice(d.price)),
                     ),
                     SortColumn(
                       label: 'Reyon',
-                      width: 96,
+                      width: 90,
                       sortKey: (d) => (d.depno ?? '').toLowerCase(),
-                      cell: (d) => Text(d.depno ?? '-', style: const TextStyle(fontSize: 12, color: AppColors.brown500)),
+                      cell: (d) => Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Text(
+                            d.depno ?? '-',
+                            style: const TextStyle(
+                                fontSize: 12, color: AppColors.brown700),
+                          ),
+                          if (d.kdvRate != null)
+                            Text(
+                              '%${d.kdvRate}',
+                              style: const TextStyle(
+                                  fontSize: 10, color: AppColors.brown400),
+                            ),
+                        ],
+                      ),
                     ),
                     SortColumn(
-                      label: 'Dönem Adedi',
-                      width: 104,
+                      label: 'Satılan Adet',
+                      width: 94,
                       numeric: true,
-                      sortKey: (d) => d.qtyWindow,
-                      cell: (d) => Text(_qty(d.qtyWindow), style: const TextStyle(color: AppColors.brown500)),
+                      sortKey: (d) => d.qty,
+                      cell: (d) => Text(
+                        _qty(d.qty),
+                        style: TextStyle(
+                          fontWeight: d.qty > 0 ? FontWeight.w700 : FontWeight.normal,
+                          color: d.qty > 0 ? AppColors.brown900 : AppColors.brown400,
+                        ),
+                      ),
+                    ),
+                    SortColumn(
+                      label: 'Ciro',
+                      width: 100,
+                      numeric: true,
+                      sortKey: (d) => d.revenue,
+                      cell: (d) => Text(
+                        formatPrice(d.revenue),
+                        style: TextStyle(
+                          fontWeight: d.revenue > 0 ? FontWeight.w700 : FontWeight.normal,
+                          color: d.revenue > 0 ? AppColors.terracotta : AppColors.brown400,
+                        ),
+                      ),
+                    ),
+                    SortColumn(
+                      label: 'İşlem',
+                      width: 68,
+                      numeric: true,
+                      sortKey: (d) => d.lineCount,
+                      cell: (d) => Text(
+                        '${d.lineCount}',
+                        style: TextStyle(
+                          color: d.lineCount > 0 ? AppColors.brown700 : AppColors.brown400,
+                        ),
+                      ),
                     ),
                     SortColumn(
                       label: 'Son Satış',
-                      width: 128,
+                      width: 124,
                       numeric: true,
                       sortKey: (d) => d.lastSoldAt?.millisecondsSinceEpoch ?? 0,
                       cell: (d) => Text(
                         d.lastSoldAt == null
                             ? 'hiç'
-                            : '${_dmy(d.lastSoldAt!)}  (${d.daysSince} g)',
-                        style: const TextStyle(fontSize: 12, color: AppColors.brown600),
+                            : '${_dmy(d.lastSoldAt!)}${d.daysSince != null ? ' (${d.daysSince} g)' : ''}',
+                        style: const TextStyle(fontSize: 11.5, color: AppColors.brown600),
                       ),
                     ),
                   ],

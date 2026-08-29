@@ -278,7 +278,7 @@ class KasaRepo {
     return rows.map((r) => KasaZReport.fromJson(r)).toList();
   }
 
-  // ---- Ölü Stok ------------------------------------------------------
+  // ---- Ölü Stok / Ürün Satışları ------------------------------------
 
   Future<List<KasaDeadStockItem>> getDeadStock({
     int days = 30,
@@ -291,6 +291,54 @@ class KasaRepo {
       'p_require_history': requireHistory,
     }).timeout(const Duration(seconds: 15));
     return (rows as List).map((r) => KasaDeadStockItem.fromJson(r as Map<String, dynamic>)).toList();
+  }
+
+  /// Product sales report over an arbitrary date range (inclusive),
+  /// via the kasa_product_sales_report RPC.
+  Future<List<KasaProductSalesReport>> getProductSalesReport({
+    required DateTime from,
+    required DateTime to,
+    String? depno,
+    bool includeUnsold = true,
+    int limit = 1000,
+  }) async {
+    final params = <String, dynamic>{
+      'p_from': _dateOnly(from),
+      'p_to': _dateOnly(to),
+      'p_include_unsold': includeUnsold,
+      'p_limit': limit,
+    };
+    if (depno != null && depno.isNotEmpty) {
+      params['p_depno'] = depno;
+    }
+    final rows = await _client
+        .rpc('kasa_product_sales_report', params: params)
+        .timeout(const Duration(seconds: 20));
+    return (rows as List)
+        .map((r) => KasaProductSalesReport.fromJson(r as Map<String, dynamic>))
+        .toList();
+  }
+
+  /// Distinct non-empty department codes (depno) from products table.
+  Future<List<String>> getDistinctDepnos() async {
+    try {
+      final rows = await _client
+          .from('products')
+          .select('depno')
+          .not('depno', 'is', null)
+          .timeout(const Duration(seconds: 8));
+      final depnos = <String>{};
+      for (final r in rows) {
+        final d = (r['depno'] as String?)?.trim();
+        if (d != null && d.isNotEmpty) {
+          depnos.add(d);
+        }
+      }
+      final list = depnos.toList()..sort();
+      return list;
+    } catch (_) {
+      return const [];
+    }
   }
 
   // ---- receipt notes (staff-added, bound to belge_id) -----------------
