@@ -20,10 +20,17 @@ devices get an FCM push with the day's kasa summary. Tapping it opens the
 | Component | Location | Status |
 |---|---|---|
 | `push_devices` table + `kasa_day_summary_json(date)` fn | `db/2026-08-29_push_devices.sql` | **applied** |
-| `daily-summary-push` edge function | `C:\Digisoft\SupabaseSync\supabase\functions\daily-summary-push\` (not tracked) | **written, not deployed** |
-| `pg_cron` + `pg_net` extensions | Supabase | **enabled** |
-| cron job | — | pending (needs the fn deployed first) |
-| Flutter FCM integration | `lib/push_service.dart` + Ayarlar UI | **pending Firebase config** |
+| `daily-summary-push` edge function | `C:\Digisoft\SupabaseSync\supabase\functions\daily-summary-push\` (not tracked) | **deployed** |
+| `pg_cron` + `pg_net` | Supabase | **enabled** |
+| cron job (`30 20 * * *`) | `db/2026-08-29_push_cron.sql` | **scheduled** (secret in Vault: `push_cron_secret`) |
+| Firebase project `ccm-barkod` | project #212623614359, Android app `1:212623614359:android:ef6ed8b0c253628aa6a4d2` | **created** (via firebase CLI) |
+| secrets `FCM_PROJECT_ID` / `FCM_SERVICE_ACCOUNT` / `PUSH_CRON_SECRET` | Supabase | **set** |
+| Flutter FCM integration | `lib/push_service.dart` + `android/` + Ayarlar → Bildirimler | **coded** |
+| Shorebird release + install on 2 phones + enable in Ayarlar | — | **pending** |
+
+Server side tested end-to-end: `net.http_post` from Postgres → edge fn → 200,
+message formats correctly, the service-account JWT → FCM v1 auth works, dead
+tokens are pruned.
 
 ## Remaining setup
 
