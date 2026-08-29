@@ -302,6 +302,49 @@ class PendingChange {
       );
 }
 
+/// A new product staged for creation, waiting to be sent from the "Kasaya
+/// Gönder" tab -- the create-side equivalent of [PendingChange]. Nothing
+/// reaches Digisoft until it's sent (which moves it to
+/// `product_create_requests`). `id` is a client-generated uuid.
+class PendingProductCreate {
+  final String id;
+  final String barcode;
+  final String stockname;
+  final num price;
+  final int? kasadepid;
+  final num? kdvRate;
+  final String? stockunit;
+  final String? reyon;
+  final String? requestedBy;
+  final DateTime createdAt;
+
+  PendingProductCreate({
+    required this.id,
+    required this.barcode,
+    required this.stockname,
+    required this.price,
+    this.kasadepid,
+    this.kdvRate,
+    this.stockunit,
+    this.reyon,
+    this.requestedBy,
+    DateTime? createdAt,
+  }) : createdAt = createdAt ?? DateTime.now();
+
+  factory PendingProductCreate.fromJson(Map<String, dynamic> json) => PendingProductCreate(
+        id: json['id'] as String,
+        barcode: json['barcode'] as String,
+        stockname: json['stockname'] as String,
+        price: json['price'] as num,
+        kasadepid: (json['kasadepid'] as num?)?.toInt(),
+        kdvRate: json['kdv_rate'] as num?,
+        stockunit: json['stockunit'] as String?,
+        reyon: json['reyon'] as String?,
+        requestedBy: json['requested_by'] as String?,
+        createdAt: json['created_at'] != null ? DateTime.parse(json['created_at'] as String) : null,
+      );
+}
+
 /// A past send-to-kasa attempt (from either `price_update_requests` or
 /// `product_field_update_requests`) that's reached a final state -- fuels
 /// the "Eski Gönderilenler" history in the "Kasaya Gönder" tab.

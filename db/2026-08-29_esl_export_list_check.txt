@@ -1,0 +1,3 @@
+Note: esl_export_requests.list keeps its CHECK (list IN ('MANAV','SARKUTERI')).
+It's the reyon name the till-PC (eslSync.js) filters TBLSTOKLAR by; the app
+must send exactly that, not a JSON payload. Fixed in commit b90ebf3.

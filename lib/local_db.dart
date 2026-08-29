@@ -17,6 +17,21 @@ import 'models.dart';
 /// would clobber an edit that hasn't reached the server yet. Once the op
 /// flushes successfully and is removed from the queue, the row is fair game
 /// for the next merge again.
+const _createPendingCreatesTableSql = '''
+  create table if not exists product_pending_creates_cache(
+    id text primary key,
+    barcode text not null,
+    stockname text not null,
+    price real not null,
+    kasadepid integer,
+    kdv_rate real,
+    stockunit text,
+    reyon text,
+    requested_by text,
+    created_at text not null
+  )
+''';
+
 class LocalDb {
   LocalDb._();
   static final LocalDb instance = LocalDb._();
@@ -44,7 +59,7 @@ class LocalDb {
     final path = p.join(dir, 'barkod_local.db');
     _db = await openDatabase(
       path,
-      version: 4,
+      version: 5,
       onUpgrade: (db, oldVersion, newVersion) async {
         if (oldVersion < 2) {
           await db.execute(
@@ -53,6 +68,9 @@ class LocalDb {
         }
         if (oldVersion < 4) {
           await db.execute('alter table products_cache add column kdv_rate real');
+        }
+        if (oldVersion < 5) {
+          await db.execute(_createPendingCreatesTableSql);
         }
         if (oldVersion < 3) {
           // Superseded by product_pending_changes below (staging is no
@@ -128,6 +146,7 @@ class LocalDb {
         await db.execute(
           'create index product_pending_changes_cache_barcode_idx on product_pending_changes_cache(barcode)',
         );
+        await db.execute(_createPendingCreatesTableSql);
         await db.execute('''
           create table pending_ops(
             id integer primary key autoincrement,
@@ -512,6 +531,73 @@ class LocalDb {
               )
             : null,
       );
+
+  // ---- staged new-product creates (see PendingProductCreate) ----
+
+  Map<String, dynamic> _pendingCreateToRow(PendingProductCreate c) => {
+        'id': c.id,
+        'barcode': c.barcode,
+        'stockname': c.stockname,
+        'price': c.price,
+        'kasadepid': c.kasadepid,
+        'kdv_rate': c.kdvRate,
+        'stockunit': c.stockunit,
+        'reyon': c.reyon,
+        'requested_by': c.requestedBy,
+        'created_at': c.createdAt.toIso8601String(),
+      };
+
+  PendingProductCreate _rowToPendingCreate(Map<String, Object?> row) => PendingProductCreate(
+        id: row['id'] as String,
+        barcode: row['barcode'] as String,
+        stockname: row['stockname'] as String,
+        price: row['price'] as num,
+        kasadepid: (row['kasadepid'] as num?)?.toInt(),
+        kdvRate: row['kdv_rate'] as num?,
+        stockunit: row['stockunit'] as String?,
+        reyon: row['reyon'] as String?,
+        requestedBy: row['requested_by'] as String?,
+        createdAt: DateTime.parse(row['created_at'] as String),
+      );
+
+  Future<void> upsertPendingCreateLocal(PendingProductCreate c) async {
+    final db = await _d;
+    await db.insert('product_pending_creates_cache', _pendingCreateToRow(c),
+        conflictAlgorithm: ConflictAlgorithm.replace);
+    _notify();
+  }
+
+  Future<void> deletePendingCreateLocal(String id) async {
+    final db = await _d;
+    await db.delete('product_pending_creates_cache', where: 'id = ?', whereArgs: [id]);
+    _notify();
+  }
+
+  Future<List<PendingProductCreate>> getAllPendingCreates() async {
+    final db = await _d;
+    final rows = await db.query('product_pending_creates_cache', orderBy: 'created_at desc');
+    return rows.map(_rowToPendingCreate).toList();
+  }
+
+  Future<void> mergeRemotePendingCreates(List<PendingProductCreate> remote) async {
+    final db = await _d;
+    final protectedIds = await _protectedIds({'stage_create', 'unstage_create'});
+    await db.transaction((txn) async {
+      for (final c in remote) {
+        if (protectedIds.contains(c.id)) continue;
+        await txn.insert('product_pending_creates_cache', _pendingCreateToRow(c),
+            conflictAlgorithm: ConflictAlgorithm.replace);
+      }
+      final remoteIds = remote.map((c) => c.id).toSet();
+      final localRows = await txn.query('product_pending_creates_cache', columns: ['id']);
+      for (final row in localRows) {
+        final id = row['id'] as String;
+        if (protectedIds.contains(id) || remoteIds.contains(id)) continue;
+        await txn.delete('product_pending_creates_cache', where: 'id = ?', whereArgs: [id]);
+      }
+    });
+    _notify();
+  }
 
   // ---- pending ops ----
 

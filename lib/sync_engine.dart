@@ -35,6 +35,7 @@ class SyncEngine {
   StreamSubscription? _listsSub;
   StreamSubscription? _itemsSub;
   StreamSubscription? _pendingChangesSub;
+  StreamSubscription? _pendingCreatesSub;
   RealtimeChannel? _productsChannel;
   Timer? _productsRefreshTimer;
   Timer? _pendingOpsRetryTimer;
@@ -76,6 +77,14 @@ class SyncEngine {
       (rows) {
         final changes = rows.map((r) => PendingChange.fromJson(r)).toList();
         unawaited(_localDb.mergeRemotePendingChanges(changes));
+      },
+      onError: (_) {},
+    );
+
+    _pendingCreatesSub = _client.from('product_pending_creates').stream(primaryKey: ['id']).listen(
+      (rows) {
+        final creates = rows.map((r) => PendingProductCreate.fromJson(r)).toList();
+        unawaited(_localDb.mergeRemotePendingCreates(creates));
       },
       onError: (_) {},
     );
@@ -129,6 +138,7 @@ class SyncEngine {
     await _listsSub?.cancel();
     await _itemsSub?.cancel();
     await _pendingChangesSub?.cancel();
+    await _pendingCreatesSub?.cancel();
     if (_productsChannel != null) await _client.removeChannel(_productsChannel!);
     _productsRefreshTimer?.cancel();
     _pendingOpsRetryTimer?.cancel();
@@ -136,6 +146,7 @@ class SyncEngine {
     _listsSub = null;
     _itemsSub = null;
     _pendingChangesSub = null;
+    _pendingCreatesSub = null;
     _productsChannel = null;
     _productsRefreshTimer = null;
     _pendingOpsRetryTimer = null;
@@ -312,6 +323,20 @@ class SyncEngine {
         });
       case 'unstage_change':
         await _client.from('product_pending_changes').delete().eq('id', payload['id']);
+      case 'stage_create':
+        await _client.from('product_pending_creates').upsert({
+          'id': payload['id'],
+          'barcode': payload['barcode'],
+          'stockname': payload['stockname'],
+          'price': payload['price'],
+          'kasadepid': payload['kasadepid'],
+          'kdv_rate': payload['kdv_rate'],
+          'stockunit': payload['stockunit'],
+          'reyon': payload['reyon'],
+          'requested_by': payload['requested_by'],
+        });
+      case 'unstage_create':
+        await _client.from('product_pending_creates').delete().eq('id', payload['id']);
       case 'log_action':
         await _client.from('activity_log').insert({
           'user_name': payload['user_name'],

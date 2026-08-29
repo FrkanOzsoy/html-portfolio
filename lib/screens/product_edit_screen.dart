@@ -229,68 +229,41 @@ class _DeleteProductButton extends StatefulWidget {
 
 class _DeleteProductButtonState extends State<_DeleteProductButton> {
   final _repo = DataRepo();
-  StreamSubscription? _sub;
-  Timer? _timeoutTimer;
   bool _busy = false;
-
-  @override
-  void dispose() {
-    _sub?.cancel();
-    _timeoutTimer?.cancel();
-    super.dispose();
-  }
 
   Future<void> _confirmAndDelete() async {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
         title: const Text('Ürünü Sil'),
-        content: Text('"${widget.stockname}" ürününü Digisoft\'tan kalıcı olarak silmek istediğinize emin misiniz?'),
+        content: Text(
+          '"${widget.stockname}" ürününü silmek için Kasaya Gönder\'e bir silme isteği eklenecek. '
+          'Ürün, oradan onaylanana kadar Digisoft\'tan silinmez.',
+        ),
         actions: [
           TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Vazgeç')),
           TextButton(
             onPressed: () => Navigator.pop(context, true),
-            child: const Text('Sil', style: TextStyle(color: AppColors.terracotta)),
+            child: const Text('Kasaya Gönder\'e Ekle', style: TextStyle(color: AppColors.terracotta)),
           ),
         ],
       ),
     );
     if (confirmed != true || !mounted) return;
 
-    _timeoutTimer?.cancel();
     setState(() => _busy = true);
-    _timeoutTimer = Timer(const Duration(seconds: 10), () {
-      if (mounted && _busy) {
-        setState(() => _busy = false);
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Yanıt alınamadı -- kasa bilgisayarını kendiniz kontrol edin.')),
-        );
-      }
-    });
     try {
-      final id = await _repo.requestProductDelete(widget.barcode);
-      _sub?.cancel();
-      _sub = _repo.watchProductDeleteStatus(id).listen((s) {
-        if (!mounted) return;
-        if (s.status == 'done') {
-          _timeoutTimer?.cancel();
-          Navigator.of(context).pop();
-          return;
-        }
-        if (s.status == 'error') {
-          _timeoutTimer?.cancel();
-          setState(() => _busy = false);
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text(s.errorMessage ?? 'Silme başarısız oldu.')),
-          );
-        }
-      });
+      await _repo.stageDelete(widget.barcode);
+      if (!mounted) return;
+      Navigator.of(context).pop();
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Silme isteği Kasaya Gönder\'e eklendi.')),
+      );
     } catch (_) {
-      _timeoutTimer?.cancel();
       if (mounted) {
         setState(() => _busy = false);
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('İstek gönderilemedi (bağlantı yok olabilir).')),
+          const SnackBar(content: Text('Kaydedilemedi, tekrar deneyin.')),
         );
       }
     }

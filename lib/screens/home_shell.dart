@@ -30,7 +30,10 @@ class _HomeShellState extends State<HomeShell> with WidgetsBindingObserver {
   int _index = 0;
   final _repo = DataRepo();
   StreamSubscription? _pendingChangesSub;
+  StreamSubscription? _pendingCreatesSub;
   int _pendingChangesCount = 0;
+  int _pendingCreatesCount = 0;
+  int get _kasayaQueueCount => _pendingChangesCount + _pendingCreatesCount;
   DateTime? _lastUpdateCheck;
 
   // Canonical screen ids -- fixed regardless of platform. What changes
@@ -130,12 +133,16 @@ class _HomeShellState extends State<HomeShell> with WidgetsBindingObserver {
     _pendingChangesSub = _repo.watchAllPendingChanges().listen((entries) {
       if (mounted) setState(() => _pendingChangesCount = entries.length);
     });
+    _pendingCreatesSub = _repo.watchAllPendingCreates().listen((entries) {
+      if (mounted) setState(() => _pendingCreatesCount = entries.length);
+    });
   }
 
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _pendingChangesSub?.cancel();
+    _pendingCreatesSub?.cancel();
     super.dispose();
   }
 
@@ -236,7 +243,7 @@ class _HomeShellState extends State<HomeShell> with WidgetsBindingObserver {
               items: [for (final id in order) _navIcons[id]],
               selectedIndex: _index,
               pendingBadgeIndex: order.indexOf(_idGonder),
-              pendingCount: _pendingChangesCount,
+              pendingCount: _kasayaQueueCount,
               onSelected: _goToTab,
               // Digisoft gives "Stok Tanıtım Kartı" its own named, prominent
               // ribbon button rather than burying it in a menu -- a small
@@ -367,13 +374,13 @@ class _HomeShellState extends State<HomeShell> with WidgetsBindingObserver {
                 ),
                 NavigationDestination(
                   icon: Badge(
-                    isLabelVisible: _pendingChangesCount > 0,
-                    label: Text('$_pendingChangesCount'),
+                    isLabelVisible: _kasayaQueueCount > 0,
+                    label: Text('$_kasayaQueueCount'),
                     child: const Icon(Icons.point_of_sale_outlined, color: AppColors.brown300),
                   ),
                   selectedIcon: Badge(
-                    isLabelVisible: _pendingChangesCount > 0,
-                    label: Text('$_pendingChangesCount'),
+                    isLabelVisible: _kasayaQueueCount > 0,
+                    label: Text('$_kasayaQueueCount'),
                     child: const Icon(Icons.point_of_sale, color: Colors.white),
                   ),
                   label: 'Gönder',

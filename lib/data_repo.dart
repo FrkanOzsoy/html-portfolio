@@ -12,6 +12,12 @@ import 'sync_engine.dart';
 const _uuid = Uuid();
 const _staffNameKey = 'staff_name';
 
+/// Sentinel `field` value for a staged product *deletion* -- reuses
+/// `product_pending_changes` (the barcode still exists in `products`, so
+/// its FK is fine) so deletes flow through the Kasaya Gönder review/send
+/// path like every other kasa action.
+const kDeleteField = '__delete__';
+
 class DataRepo {
   SupabaseClient get _client => Supabase.instance.client;
   final _localDb = LocalDb.instance;
@@ -639,6 +645,105 @@ class DataRepo {
     }
   }
 
+  /// Convenience wrapper -- a product deletion is just a staged change with
+  /// the [kDeleteField] sentinel, so it lands in Kasaya Gönder like anything
+  /// else and only reaches Digisoft when sent from there.
+  Future<void> stageDelete(String barcode) =>
+      stageChange(barcode: barcode, field: kDeleteField, value: 'SİL');
+
+  // ---- staged new-product creates. Same local-first + shared-realtime
+  // model as product_pending_changes: nothing reaches Digisoft until it's
+  // sent from the "Kasaya Gönder" tab (sendPendingCreate), which is what
+  // moves it into product_create_requests.
+
+  Future<List<PendingProductCreate>> getAllPendingCreates() async {
+    try {
+      return await _localDb.getAllPendingCreates();
+    } catch (_) {
+      return [];
+    }
+  }
+
+  Stream<List<PendingProductCreate>> watchAllPendingCreates() async* {
+    yield await getAllPendingCreates();
+    await for (final _ in _localDb.changes) {
+      yield await getAllPendingCreates();
+    }
+  }
+
+  Future<void> stageProductCreate({
+    required String barcode,
+    required String stockname,
+    required num price,
+    int? kasadepid,
+    num? kdvRate,
+    String? stockunit,
+    String? reyon,
+  }) async {
+    final name = await getStaffName();
+    final create = PendingProductCreate(
+      id: _uuid.v4(),
+      barcode: barcode,
+      stockname: stockname,
+      price: price,
+      kasadepid: kasadepid,
+      kdvRate: kdvRate,
+      stockunit: stockunit,
+      reyon: reyon,
+      requestedBy: name,
+    );
+    await _localDb.upsertPendingCreateLocal(create);
+    await _localDb.enqueueOp('stage_create', {
+      'id': create.id,
+      'barcode': barcode,
+      'stockname': stockname,
+      'price': price,
+      'kasadepid': kasadepid,
+      'kdv_rate': kdvRate,
+      'stockunit': stockunit,
+      'reyon': reyon,
+      'requested_by': name,
+    });
+    unawaited(SyncEngine.instance.pushNow());
+    unawaited(logAction('yeni_urun_taslagi', detail: '$barcode - $stockname'));
+  }
+
+  Future<void> unstageProductCreate(String id) async {
+    await _localDb.deletePendingCreateLocal(id);
+    if (await _localDb.cancelQueuedOp('stage_create', id)) return;
+    try {
+      await _client.from('product_pending_creates').delete().eq('id', id).timeout(const Duration(seconds: 5));
+    } catch (_) {
+      await _localDb.enqueueOp('unstage_create', {'id': id});
+      unawaited(SyncEngine.instance.pushNow());
+    }
+  }
+
+  /// Sends a staged new product through the real create pipeline, then
+  /// clears it from staging on success. Returns an error message on failure
+  /// (the staged row is left in place to retry), or null on success.
+  Future<String?> sendPendingCreate(PendingProductCreate create) async {
+    try {
+      final id = await requestProductCreate(
+        barcode: create.barcode,
+        stockname: create.stockname,
+        price: create.price,
+        kasadepid: create.kasadepid,
+        kdvRate: create.kdvRate,
+        stockunit: create.stockunit,
+        reyon: create.reyon,
+      );
+      // Best-effort: once Digisoft has really made it, pull the row so the
+      // local catalog shows it without waiting for the periodic full sync.
+      unawaited(_refreshAfterDone(create.barcode, watchProductCreateStatus(id)));
+      await unstageProductCreate(create.id);
+      unawaited(logAction('kasaya_gonderildi', detail: '${create.barcode} - ${create.stockname} (yeni ürün)'));
+      return null;
+    } catch (_) {
+      return 'Gönderilemedi (bağlantı yok olabilir).';
+    }
+  }
+
   /// Local write-queue backlog on this device -- 0 once everything's
   /// reached Supabase. Surfaced in the UI (home_shell.dart) so staff can
   /// tell "still sitting on my phone" apart from "sent, waiting on the
@@ -685,6 +790,18 @@ class DataRepo {
   Future<String?> sendPendingChange(PendingChange change, {bool alsoPrintLabel = false}) async {
     try {
       final Stream<({String status, String? errorMessage})> statusStream;
+      if (change.field == kDeleteField) {
+        final id = await requestProductDelete(change.barcode);
+        statusStream = watchProductDeleteStatus(id);
+        unawaited(statusStream
+            .firstWhere((s) => s.status == 'done', orElse: () => (status: 'error', errorMessage: null))
+            .then((s) {
+          if (s.status == 'done') unawaited(_localDb.deleteProductLocal(change.barcode));
+        }));
+        await unstageChange(change.id);
+        unawaited(logAction('kasaya_gonderildi', detail: '${change.barcode} SİL'));
+        return null;
+      }
       if (change.field == 'price') {
         final id = await requestPriceUpdate(change.barcode, num.parse(change.newValue), oldPrice: change.product?.price);
         statusStream = watchPriceUpdateStatus(id);

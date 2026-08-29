@@ -204,7 +204,7 @@ class _BulkPriceImportScreenState extends State<BulkPriceImportScreen> {
           updated++;
         } else if (row.status == _RowStatus.newProduct) {
           final dept = matchKdvDepartmentByRate(row.raw.kdvRate, _departments);
-          await _repo.requestProductCreate(
+          await _repo.stageProductCreate(
             barcode: row.raw.barcode,
             stockname: row.raw.name!,
             price: row.raw.price!,
@@ -227,7 +227,7 @@ class _BulkPriceImportScreenState extends State<BulkPriceImportScreen> {
         content: Text(
           [
             if (updated > 0) '$updated fiyat değişikliği Kasaya Gönder\'e eklendi.',
-            if (created > 0) '$created yeni ürün oluşturma isteği gönderildi.',
+            if (created > 0) '$created yeni ürün Kasaya Gönder\'e eklendi.',
             if (failed > 0) '$failed satır başarısız oldu.',
           ].join('\n'),
         ),

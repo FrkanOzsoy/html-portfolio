@@ -24,6 +24,7 @@ String _fieldLabel(String field) => switch (field) {
       'stockname' => 'İsim',
       'stockunit' => 'Birim',
       'depno' => 'Grup',
+      kDeleteField => 'Ürünü Sil',
       _ => field,
     };
 
@@ -86,7 +87,9 @@ class KasayaGonderScreen extends StatefulWidget {
 class _KasayaGonderScreenState extends State<KasayaGonderScreen> with SingleTickerProviderStateMixin {
   final _repo = DataRepo();
   List<PendingChange> _latestChanges = [];
+  List<PendingProductCreate> _latestCreates = [];
   final Set<String> _selectedIds = {};
+  final Set<String> _selectedCreateIds = {};
   bool _sending = false;
   List<SentChangeRecord> _history = [];
   bool _historyLoading = true;
@@ -97,6 +100,7 @@ class _KasayaGonderScreenState extends State<KasayaGonderScreen> with SingleTick
   // rebuild of this State) tore down and re-subscribed a brand new stream
   // each time, instead of reusing the same live one.
   late final Stream<List<PendingChange>> _pendingChangesStream = _repo.watchAllPendingChanges();
+  late final Stream<List<PendingProductCreate>> _pendingCreatesStream = _repo.watchAllPendingCreates();
   // Whoever set their name on *this* device (see DataRepo.getStaffName) --
   // there's no real per-user auth (one shared staff account), so "current
   // user" just means "matches this device's own self-reported name". Used
@@ -152,12 +156,13 @@ class _KasayaGonderScreenState extends State<KasayaGonderScreen> with SingleTick
   // staged work at once.
   Future<void> _revokeSelected() async {
     final toRevoke = _latestChanges.where((c) => _selectedIds.contains(c.id)).toList();
-    if (toRevoke.isEmpty) return;
+    final creasToRevoke = _latestCreates.where((c) => _selectedCreateIds.contains(c.id)).toList();
+    if (toRevoke.isEmpty && creasToRevoke.isEmpty) return;
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('Seçili Değişiklikleri Kaldır'),
-        content: Text('${toRevoke.length} bekleyen değişiklik kaldırılacak. Emin misiniz?'),
+        title: const Text('Seçilenleri Kaldır'),
+        content: Text('${toRevoke.length + creasToRevoke.length} bekleyen öğe kaldırılacak. Emin misiniz?'),
         actions: [
           TextButton(onPressed: () => Navigator.of(context).pop(false), child: const Text('Vazgeç')),
           ElevatedButton(
@@ -172,10 +177,16 @@ class _KasayaGonderScreenState extends State<KasayaGonderScreen> with SingleTick
     for (final c in toRevoke) {
       await _repo.unstageChange(c.id);
     }
+    for (final c in creasToRevoke) {
+      await _repo.unstageProductCreate(c.id);
+    }
     if (mounted) {
-      setState(() => _selectedIds.clear());
+      setState(() {
+        _selectedIds.clear();
+        _selectedCreateIds.clear();
+      });
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('${toRevoke.length} değişiklik kaldırıldı.')),
+        SnackBar(content: Text('${toRevoke.length + creasToRevoke.length} öğe kaldırıldı.')),
       );
     }
   }
@@ -191,11 +202,20 @@ class _KasayaGonderScreenState extends State<KasayaGonderScreen> with SingleTick
     final selected = _latestChanges
         .where((c) => _selectedIds.contains(c.id) && (requestersByBarcode[c.barcode]?.length ?? 1) <= 1)
         .toList();
-    if (selected.isEmpty) return false;
+    final selectedCreates = _latestCreates.where((c) => _selectedCreateIds.contains(c.id)).toList();
+    if (selected.isEmpty && selectedCreates.isEmpty) return false;
 
     setState(() => _sending = true);
     var successCount = 0;
     final errors = <String>[];
+    for (final create in selectedCreates) {
+      final err = await _repo.sendPendingCreate(create);
+      if (err == null) {
+        successCount++;
+      } else {
+        errors.add('${create.stockname} (yeni ürün)');
+      }
+    }
     for (final change in selected) {
       final err = await _repo.sendPendingChange(change, alsoPrintLabel: alsoPrintLabel);
       if (err == null) {
@@ -208,9 +228,10 @@ class _KasayaGonderScreenState extends State<KasayaGonderScreen> with SingleTick
       setState(() {
         _sending = false;
         _selectedIds.clear();
+        _selectedCreateIds.clear();
       });
       final message = errors.isEmpty
-          ? '$successCount değişiklik gönderildi.${alsoPrintLabel ? ' Etiketler yazdırılıyor.' : ''}'
+          ? '$successCount öğe gönderildi.${alsoPrintLabel ? ' Etiketler yazdırılıyor.' : ''}'
           : '$successCount gönderildi, ${errors.length} hata: ${errors.join(', ')}';
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
       unawaited(_loadHistory());
@@ -267,7 +288,13 @@ class _KasayaGonderScreenState extends State<KasayaGonderScreen> with SingleTick
           const SyncHealthBanner(),
             const SizedBox(height: 12),
             Expanded(
-              child: StreamBuilder<List<PendingChange>>(
+              child: StreamBuilder<List<PendingProductCreate>>(
+                stream: _pendingCreatesStream,
+                builder: (context, createSnap) {
+                  final creates = createSnap.data ?? [];
+                  _latestCreates = creates;
+                  _selectedCreateIds.retainAll(creates.map((c) => c.id));
+                  return StreamBuilder<List<PendingChange>>(
                 stream: _pendingChangesStream,
                 builder: (context, snapshot) {
                   final changes = snapshot.data ?? [];
@@ -314,24 +341,46 @@ class _KasayaGonderScreenState extends State<KasayaGonderScreen> with SingleTick
 
                   return ListView(
                     children: [
-                      if (!snapshot.hasData)
+                      if (!snapshot.hasData && !createSnap.hasData)
                         const Padding(
                           padding: EdgeInsets.symmetric(vertical: 24),
                           child: Center(child: CircularProgressIndicator()),
                         )
-                      else if (changes.isEmpty)
+                      else if (changes.isEmpty && creates.isEmpty)
                         const Padding(
                           padding: EdgeInsets.symmetric(vertical: 24),
                           child: Center(
                             child: Text(
-                              'Gönderilecek bekleyen değişiklik yok.\n\n'
-                              'Bir üründe kalem simgesinden yeni isim/fiyat önerebilirsiniz.',
+                              'Gönderilecek bekleyen bir şey yok.\n\n'
+                              'Ürün düzenleme, yeni ürün ve silme işlemleri buraya birikir; '
+                              'kasaya işlenmesi için buradan gönderin.',
                               textAlign: TextAlign.center,
                               style: TextStyle(color: AppColors.brown500),
                             ),
                           ),
-                        )
-                      else ...[
+                        ),
+                      if (creates.isNotEmpty) ...[
+                        const Padding(
+                          padding: EdgeInsets.only(top: 4, bottom: 6),
+                          child: Text('Yeni Ürünler',
+                              style: TextStyle(fontWeight: FontWeight.bold, color: AppColors.brown700, fontSize: 13)),
+                        ),
+                        for (final create in creates)
+                          _PendingCreateCard(
+                            create: create,
+                            selected: _selectedCreateIds.contains(create.id),
+                            onSelectChanged: (v) => setState(() {
+                              if (v) {
+                                _selectedCreateIds.add(create.id);
+                              } else {
+                                _selectedCreateIds.remove(create.id);
+                              }
+                            }),
+                            onRevoke: () => _repo.unstageProductCreate(create.id),
+                          ),
+                        const SizedBox(height: 12),
+                      ],
+                      if (changes.isNotEmpty) ...[
                         Padding(
                           padding: const EdgeInsets.only(bottom: 4),
                           child: Text(
@@ -399,9 +448,11 @@ class _KasayaGonderScreenState extends State<KasayaGonderScreen> with SingleTick
                             SquareIconButton(
                               icon: Icons.playlist_remove,
                               color: AppColors.terracotta,
-                              tooltip: 'Seçili değişiklikleri kaldır',
+                              tooltip: 'Seçilenleri kaldır',
                               size: 44,
-                              onPressed: !_sending && _selectedIds.isNotEmpty ? _revokeSelected : null,
+                              onPressed: !_sending && (_selectedIds.isNotEmpty || _selectedCreateIds.isNotEmpty)
+                                  ? _revokeSelected
+                                  : null,
                             ),
                           ],
                         ),
@@ -445,6 +496,8 @@ class _KasayaGonderScreenState extends State<KasayaGonderScreen> with SingleTick
                     ],
                   );
                 },
+              );
+                },
               ),
             ),
             const SizedBox(height: 12),
@@ -454,9 +507,9 @@ class _KasayaGonderScreenState extends State<KasayaGonderScreen> with SingleTick
                 Expanded(
                   child: ServerActionButton(
                     icon: Icons.point_of_sale,
-                    label: 'Kasaya Gönder${_selectedIds.isEmpty ? '' : ' (${_selectedIds.length})'}',
+                    label: 'Kasaya Gönder${(_selectedIds.length + _selectedCreateIds.length) == 0 ? '' : ' (${_selectedIds.length + _selectedCreateIds.length})'}',
                     color: AppColors.brown800,
-                    enabled: !_sending && _selectedIds.isNotEmpty,
+                    enabled: !_sending && (_selectedIds.isNotEmpty || _selectedCreateIds.isNotEmpty),
                     onPressed: () => _sendSelected(alsoPrintLabel: false),
                   ),
                 ),
@@ -488,8 +541,6 @@ class TeraziyeGonderScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) => const SafeArea(child: _TeraziyeGonderTab());
 }
-
-enum _TeraziyeMode { teraziOnly, kasaVeTerazi }
 
 /// Per-item editable working copy for the Teraziye Gönder flow -- plain
 /// controllers, not staged anywhere, since these edits only ever matter for
@@ -588,34 +639,31 @@ class _TeraziyeGonderTabState extends State<_TeraziyeGonderTab> {
     });
   }
 
-  Future<int> _submit(_TeraziyeMode mode) async {
+  /// Pressing "Teraziye Gönder" does two independent things:
+  ///  1. stages any name/price corrections into Kasaya Gönder (they reach
+  ///     Digisoft only once sent from there -- like every other kasa action),
+  ///  2. writes the scale file: the till-PC regenerates CASLP16.PLU from
+  ///     Digisoft's *current* rows by reyon name. So after sending the
+  ///     staged changes from Kasaya Gönder, press this again for an
+  ///     up-to-date file.
+  Future<int> _submit() async {
     final list = _selectedList;
     if (list == null) throw StateError('Liste seçilmedi');
-    // No per-item selection any more -- the whole list goes, every time
-    // (see the removed Checkbox in _TeraziyeItemCard).
-
-    if (mode == _TeraziyeMode.kasaVeTerazi) {
-      // Only name/price are things Digisoft's side actually supports
-      // editing right now -- barcode has no field-update path server-side
-      // yet, so it only ever reaches the scale export below.
-      for (final item in _items) {
-        final st = _itemStates[item.id]!;
-        final product = item.product;
-        if (product == null) continue;
-        final newName = st.nameController.text.trim();
-        final newPrice = num.tryParse(st.priceController.text.trim().replaceAll(',', '.'));
-        if (newName.isNotEmpty && newName != product.stockname) {
-          unawaited(_repo.requestFieldUpdate(product.barcode, 'stockname', newName, oldValue: product.stockname));
-        }
-        if (newPrice != null && newPrice != product.price) {
-          unawaited(_repo.requestPriceUpdate(product.barcode, newPrice, oldPrice: product.price));
-        }
+    for (final item in _items) {
+      final st = _itemStates[item.id]!;
+      final product = item.product;
+      if (product == null) continue;
+      final newName = st.nameController.text.trim();
+      final newPrice = num.tryParse(st.priceController.text.trim().replaceAll(',', '.'));
+      if (newName.isNotEmpty && newName != product.stockname) {
+        await _repo.stageChange(
+            barcode: product.barcode, field: 'stockname', value: newName, listName: 'Terazi · ${list.name}');
+      }
+      if (newPrice != null && newPrice != product.price) {
+        await _repo.stageChange(
+            barcode: product.barcode, field: 'price', value: newPrice.toString(), listName: 'Terazi · ${list.name}');
       }
     }
-
-    // The scale export just needs the reyon name -- the till-PC rebuilds
-    // the PLU file from Digisoft's own rows (which the name/price requests
-    // above will have updated by the time it runs).
     return _repo.requestEslExport(listName: list.name, itemCount: _items.length);
   }
 
@@ -717,11 +765,7 @@ class _TeraziyeGonderTabState extends State<_TeraziyeGonderTab> {
           ),
         ),
         // Pinned outside the ScrollView so it's always reachable without
-        // scrolling down through however many items the list has -- the
-        // whole reason the item cards above were shrunk down to name+price.
-        // Two send buttons now instead of a top mode-toggle + one button:
-        // each is its own destination, so there's no "which mode am I in"
-        // to check before sending.
+        // scrolling down through however many items the list has.
         if (_items.isNotEmpty)
           Container(
             padding: const EdgeInsets.fromLTRB(16, 10, 16, 16),
@@ -731,83 +775,34 @@ class _TeraziyeGonderTabState extends State<_TeraziyeGonderTab> {
             ),
             child: SafeArea(
               top: false,
-              child: _TeraziyeSendButtons(
-                enabled: _teraziyeSendingEnabled,
-                onSubmit: _submit,
-                watchStatus: _repo.watchEslExportStatus,
-                // Reload once it's through so the name/price fields refresh
-                // to the just-applied values -- otherwise a second press
-                // would re-send every diff again.
-                onDone: () {
-                  final l = _selectedList;
-                  if (l != null) _selectList(l);
-                },
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  const Text(
+                    'Terazi dosyasını günceller; düzeltilen isim/fiyatlar Kasaya Gönder\'e eklenir.',
+                    style: TextStyle(fontSize: 11.5, color: AppColors.brown500),
+                  ),
+                  const SizedBox(height: 8),
+                  QueuedActionButton(
+                    icon: Icons.monitor_weight_outlined,
+                    label: 'Teraziye Gönder',
+                    enabled: _teraziyeSendingEnabled,
+                    padding: const EdgeInsets.symmetric(vertical: 18),
+                    onSubmit: _submit,
+                    watchStatus: _repo.watchEslExportStatus,
+                    // Reload once it's through so the fields refresh to the
+                    // staged values -- otherwise a second press would stage
+                    // every diff again.
+                    onFinished: (status) {
+                      if (status != 'done') return;
+                      final l = _selectedList;
+                      if (l != null) _selectList(l);
+                    },
+                  ),
+                ],
               ),
             ),
           ),
-      ],
-    );
-  }
-}
-
-/// The two pinned send buttons on the Teraziye Gönder screen -- laid out
-/// side by side where there's width for it (desktop) and stacked on a
-/// phone. Each drives the same [_TeraziyeGonderTabState._submit] with its
-/// own [_TeraziyeMode].
-class _TeraziyeSendButtons extends StatelessWidget {
-  final bool enabled;
-  final Future<int> Function(_TeraziyeMode mode) onSubmit;
-  final Stream<({String status, String? errorMessage})> Function(int id) watchStatus;
-  final VoidCallback onDone;
-
-  const _TeraziyeSendButtons({
-    required this.enabled,
-    required this.onSubmit,
-    required this.watchStatus,
-    required this.onDone,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    void handleFinished(String status) {
-      if (status == 'done') onDone();
-    }
-
-    final terazi = QueuedActionButton(
-      icon: Icons.monitor_weight_outlined,
-      label: 'Teraziye Gönder',
-      enabled: enabled,
-      padding: const EdgeInsets.symmetric(vertical: 20),
-      onSubmit: () => onSubmit(_TeraziyeMode.teraziOnly),
-      watchStatus: watchStatus,
-      onFinished: handleFinished,
-    );
-    final kasaVeTerazi = QueuedActionButton(
-      icon: Icons.point_of_sale,
-      label: 'Kasa ve Teraziye Gönder',
-      color: AppColors.brown900,
-      enabled: enabled,
-      padding: const EdgeInsets.symmetric(vertical: 20),
-      onSubmit: () => onSubmit(_TeraziyeMode.kasaVeTerazi),
-      watchStatus: watchStatus,
-      onFinished: handleFinished,
-    );
-    if (isDesktopPlatform) {
-      return Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Expanded(child: terazi),
-          const SizedBox(width: 12),
-          Expanded(child: kasaVeTerazi),
-        ],
-      );
-    }
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        terazi,
-        const SizedBox(height: 10),
-        kasaVeTerazi,
       ],
     );
   }
@@ -870,6 +865,79 @@ class _TeraziyeItemCard extends StatelessWidget {
             const SizedBox(width: 8),
             Text('PLU $plu', style: TextStyle(fontSize: desktop ? 13 : 11, color: AppColors.brown400)),
           ],
+        ],
+      ),
+    );
+  }
+}
+
+/// A new product staged for creation, waiting in the Kasaya Gönder queue --
+/// the create-side counterpart of [_PendingChangeCard].
+class _PendingCreateCard extends StatelessWidget {
+  final PendingProductCreate create;
+  final bool selected;
+  final ValueChanged<bool> onSelectChanged;
+  final VoidCallback onRevoke;
+
+  const _PendingCreateCard({
+    required this.create,
+    required this.selected,
+    required this.onSelectChanged,
+    required this.onRevoke,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 8),
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: AppColors.creamCard,
+        borderRadius: BorderRadius.circular(AppRadius.box),
+        border: Border.all(color: selected ? AppColors.terracotta : AppColors.creamBorder, width: selected ? 2 : 1),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Checkbox(
+            value: selected,
+            onChanged: (v) => onSelectChanged(v ?? false),
+            activeColor: AppColors.terracotta,
+          ),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    const Icon(Icons.add_circle, size: 15, color: AppColors.success),
+                    const SizedBox(width: 4),
+                    Expanded(
+                      child: Text(create.stockname,
+                          style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: AppColors.brown900)),
+                    ),
+                  ],
+                ),
+                Text(create.barcode, style: const TextStyle(fontSize: 13, color: AppColors.brown500)),
+                Padding(
+                  padding: const EdgeInsets.only(top: 2),
+                  child: Text(
+                    'Yeni ürün · ${formatPrice(create.price)}'
+                    '${create.stockunit != null && create.stockunit!.isNotEmpty ? ' · ${create.stockunit}' : ''}'
+                    ' · ${_formatTime(create.createdAt)}',
+                    style: const TextStyle(fontSize: 11, color: AppColors.brown400, fontStyle: FontStyle.italic),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          SquareIconButton(
+            icon: Icons.close,
+            color: AppColors.brown400,
+            tooltip: 'Kaldır',
+            size: 28,
+            onPressed: onRevoke,
+          ),
         ],
       ),
     );
@@ -940,22 +1008,35 @@ class _PendingChangeCard extends StatelessWidget {
                   ),
                 ),
                 const SizedBox(height: 6),
-                RichText(
-                  text: TextSpan(
-                    style: const TextStyle(fontSize: 12, color: AppColors.brown500),
+                if (change.field == kDeleteField)
+                  Row(
                     children: [
-                      TextSpan(
-                        text:
-                            '${_fieldLabel(change.field)}: ${change.field == 'price' ? formatPrice(change.product?.price) : (change.product?.stockname ?? '-')}  →  ',
-                      ),
-                      TextSpan(
-                        text: _formatValue(change.field, change.newValue),
-                        style: const TextStyle(fontWeight: FontWeight.bold, color: AppColors.terracotta),
+                      const Icon(Icons.delete_forever, size: 15, color: AppColors.terracotta),
+                      const SizedBox(width: 4),
+                      Text(
+                        'Bu ürün Digisoft\'tan silinecek',
+                        style: const TextStyle(
+                            fontSize: 12, fontWeight: FontWeight.bold, color: AppColors.terracotta),
                       ),
                     ],
+                  )
+                else
+                  RichText(
+                    text: TextSpan(
+                      style: const TextStyle(fontSize: 12, color: AppColors.brown500),
+                      children: [
+                        TextSpan(
+                          text:
+                              '${_fieldLabel(change.field)}: ${change.field == 'price' ? formatPrice(change.product?.price) : (change.product?.stockname ?? '-')}  →  ',
+                        ),
+                        TextSpan(
+                          text: _formatValue(change.field, change.newValue),
+                          style: const TextStyle(fontWeight: FontWeight.bold, color: AppColors.terracotta),
+                        ),
+                      ],
+                    ),
                   ),
-                ),
-                if (alreadyApplied)
+                if (alreadyApplied && change.field != kDeleteField)
                   Padding(
                     padding: const EdgeInsets.only(top: 6),
                     child: Row(

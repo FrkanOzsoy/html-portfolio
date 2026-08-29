@@ -1,12 +1,12 @@
-import 'dart:async';
 import 'package:flutter/material.dart';
 import '../data_repo.dart';
 import '../models.dart';
 import '../theme.dart';
 
-/// Creates a brand-new product in Digisoft -- a live request (like label
-/// printing), not staged like edits: there's no existing row to compare
-/// against, so batching through "Gönder" wouldn't add anything here.
+/// Fills in a brand-new product and *stages* it for the "Kasaya Gönder" tab
+/// -- like every other kasa action, it doesn't reach Digisoft until it's
+/// sent from there. It stays local (and shared-pending across devices)
+/// until then.
 class ProductCreateScreen extends StatefulWidget {
   /// Pre-fills the barcode field -- set when reached from a "not found"
   /// scan/search result, so staff don't have to retype what was just typed.
@@ -27,13 +27,7 @@ class _ProductCreateScreenState extends State<ProductCreateScreen> {
   final _unitController = TextEditingController();
   late final Future<List<KdvDepartment>> _departmentsFuture = _repo.getKdvDepartments();
   int? _selectedDepartment;
-
-  StreamSubscription? _sub;
-  Timer? _timeoutTimer;
-  String? _status;
-  String? _errorMessage;
-
-  bool get _busy => _status == 'pending' || _status == 'processing';
+  bool _busy = false;
 
   @override
   void dispose() {
@@ -41,29 +35,18 @@ class _ProductCreateScreenState extends State<ProductCreateScreen> {
     _nameController.dispose();
     _priceController.dispose();
     _unitController.dispose();
-    _sub?.cancel();
-    _timeoutTimer?.cancel();
     super.dispose();
   }
 
   Future<void> _submit(List<KdvDepartment> departments) async {
     if (!(_formKey.currentState?.validate() ?? false)) return;
-    _timeoutTimer?.cancel();
-    setState(() {
-      _status = 'pending';
-      _errorMessage = null;
-    });
-    // Same "don't spin forever" backstop as label printing -- if the
-    // till-PC service is down, say so within 10s instead of hanging.
-    _timeoutTimer = Timer(const Duration(seconds: 10), () {
-      if (mounted && _busy) setState(() => _status = 'timeout');
-    });
+    setState(() => _busy = true);
     try {
       KdvDepartment? dept;
       for (final d in departments) {
         if (d.kasadepid == _selectedDepartment) dept = d;
       }
-      final id = await _repo.requestProductCreate(
+      await _repo.stageProductCreate(
         barcode: _barcodeController.text.trim(),
         stockname: _nameController.text.trim(),
         price: num.parse(_priceController.text.trim().replaceAll(',', '.')),
@@ -71,41 +54,20 @@ class _ProductCreateScreenState extends State<ProductCreateScreen> {
         kdvRate: dept?.kdvRate,
         stockunit: _unitController.text.trim().isEmpty ? null : _unitController.text.trim(),
       );
-      _sub?.cancel();
-      _sub = _repo.watchProductCreateStatus(id).listen((s) {
-        if (!mounted) return;
-        setState(() {
-          _status = s.status;
-          _errorMessage = s.errorMessage;
-        });
-        if (s.status == 'done' || s.status == 'error') _timeoutTimer?.cancel();
-      });
+      if (!mounted) return;
+      Navigator.of(context).pop();
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Yeni ürün Kasaya Gönder\'e eklendi. Kasaya göndermek için oradan onaylayın.')),
+      );
     } catch (_) {
-      _timeoutTimer?.cancel();
       if (mounted) {
-        setState(() {
-          _status = 'error';
-          _errorMessage = 'İstek gönderilemedi (bağlantı yok olabilir).';
-        });
+        setState(() => _busy = false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Kaydedilemedi, tekrar deneyin.')),
+        );
       }
     }
   }
-
-  Color get _statusColor => switch (_status) {
-        'done' => AppColors.success,
-        'error' || 'timeout' => AppColors.terracotta,
-        'pending' || 'processing' => AppColors.mustard,
-        _ => AppColors.brown400,
-      };
-
-  String get _statusText => switch (_status) {
-        'pending' => 'Gönderiliyor…',
-        'processing' => 'Digisoft\'ta oluşturuluyor…',
-        'done' => 'Ürün oluşturuldu ✓',
-        'error' => _errorMessage ?? 'Hata oluştu',
-        'timeout' => 'Yanıt alınamadı -- kasa bilgisayarını kendiniz kontrol edin.',
-        _ => '',
-      };
 
   @override
   Widget build(BuildContext context) {
@@ -184,26 +146,14 @@ class _ProductCreateScreenState extends State<ProductCreateScreen> {
                               width: 16,
                               child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
                             )
-                          : const Icon(Icons.add_circle_outline, size: 18),
-                      label: const Text('Ürünü Oluştur'),
+                          : const Icon(Icons.playlist_add, size: 18),
+                      label: const Text('Kasaya Gönder\'e Ekle'),
                     ),
-                    if (_status != null)
-                      Padding(
-                        padding: const EdgeInsets.only(top: 8),
-                        child: Text(_statusText, style: TextStyle(color: _statusColor, fontWeight: FontWeight.w600)),
-                      ),
-                    if (_status == 'done')
-                      Padding(
-                        padding: const EdgeInsets.only(top: 12),
-                        child: OutlinedButton(
-                          onPressed: () => Navigator.of(context).pop(),
-                          style: OutlinedButton.styleFrom(
-                            side: const BorderSide(color: AppColors.brown300, width: 2),
-                            padding: const EdgeInsets.symmetric(vertical: 14),
-                          ),
-                          child: const Text('Kapat', style: TextStyle(color: AppColors.brown700)),
-                        ),
-                      ),
+                    const SizedBox(height: 8),
+                    const Text(
+                      'Ürün, Kasaya Gönder sekmesinden onaylanana kadar Digisoft\'a işlenmez.',
+                      style: TextStyle(fontSize: 12, color: AppColors.brown500),
+                    ),
                   ],
                 ),
               );
