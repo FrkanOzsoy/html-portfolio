@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import '../app_settings.dart';
 import '../data_repo.dart';
 import '../models.dart';
+import '../push_service.dart';
 import '../theme.dart';
 
 /// Desktop-only "Ayarlar" tab (HomeShell._idAyarlar, far right). Two parts:
@@ -39,6 +40,16 @@ class _SettingsScreenState extends State<SettingsScreen> {
           const _TextScaleSetting(),
           const SizedBox(height: 14),
           const _DefaultTabSetting(),
+          const SizedBox(height: 32),
+          const _SectionTitle('Bildirimler', icon: Icons.notifications_active_outlined),
+          const SizedBox(height: 4),
+          const Text(
+            'Her gece 23:30\'da günün özeti seçili Android cihazlara bildirim olarak gönderilir. '
+            'Uygulamayı açan her telefon burada listelenir — özeti almasını istediğiniz cihazları açın.',
+            style: TextStyle(color: AppColors.brown500, fontSize: 12.5, height: 1.4),
+          ),
+          const SizedBox(height: 12),
+          const _NotificationDevices(),
           const SizedBox(height: 32),
           Row(
             children: [
@@ -442,4 +453,135 @@ class _HCell extends StatelessWidget {
   @override
   Widget build(BuildContext context) => Text(text,
       style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 12, color: AppColors.brown800));
+}
+
+// ---- notification devices (nightly Günlük Özet push) ----
+
+class _NotificationDevices extends StatefulWidget {
+  const _NotificationDevices();
+  @override
+  State<_NotificationDevices> createState() => _NotificationDevicesState();
+}
+
+class _NotificationDevicesState extends State<_NotificationDevices> {
+  final _admin = PushAdmin();
+  late Future<List<PushDevice>> _future = _admin.listDevices();
+  final _busy = <String>{};
+
+  void _reload() => setState(() => _future = _admin.listDevices());
+
+  static String _seen(DateTime? dt) {
+    if (dt == null) return '';
+    final d = DateTime.now().difference(dt.toLocal());
+    if (d.inMinutes < 60) return '${d.inMinutes} dk önce';
+    if (d.inHours < 24) return '${d.inHours} sa önce';
+    return '${d.inDays} gün önce';
+  }
+
+  Future<void> _toggle(PushDevice dev, bool value) async {
+    setState(() => _busy.add(dev.token));
+    try {
+      await _admin.setEnabled(dev.token, value);
+    } finally {
+      if (mounted) {
+        _busy.remove(dev.token);
+        _reload();
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return FutureBuilder<List<PushDevice>>(
+      future: _future,
+      builder: (context, snap) {
+        if (snap.connectionState == ConnectionState.waiting) {
+          return const Padding(
+            padding: EdgeInsets.symmetric(vertical: 24),
+            child: Center(child: CircularProgressIndicator()),
+          );
+        }
+        final devices = snap.data ?? [];
+        if (devices.isEmpty) {
+          return const Padding(
+            padding: EdgeInsets.symmetric(vertical: 20),
+            child: Text(
+              'Henüz kayıtlı cihaz yok. Bildirim almasını istediğiniz telefonlarda '
+              'uygulamayı bir kez açın (ve bildirim iznini verin), sonra bu listeyi yenileyin.',
+              style: TextStyle(color: AppColors.brown500, fontSize: 12.5),
+            ),
+          );
+        }
+        final enabledCount = devices.where((d) => d.enabled).length;
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Row(
+              children: [
+                Text('$enabledCount cihaz özet alıyor',
+                    style: const TextStyle(fontSize: 12.5, color: AppColors.brown600, fontWeight: FontWeight.w600)),
+                const Spacer(),
+                IconButton(
+                  onPressed: _reload,
+                  icon: const Icon(Icons.refresh, size: 18, color: AppColors.brown600),
+                  tooltip: 'Yenile',
+                ),
+              ],
+            ),
+            const SizedBox(height: 4),
+            Container(
+              decoration: BoxDecoration(
+                border: Border.all(color: AppColors.creamBorder),
+                borderRadius: BorderRadius.circular(AppRadius.box),
+              ),
+              clipBehavior: Clip.antiAlias,
+              child: Column(
+                children: [
+                  for (var i = 0; i < devices.length; i++)
+                    Container(
+                      color: i.isEven ? Colors.white : AppColors.creamCard,
+                      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                      child: Row(
+                        children: [
+                          Icon(devices[i].platform == 'ios' ? Icons.phone_iphone : Icons.phone_android,
+                              size: 18, color: AppColors.brown400),
+                          const SizedBox(width: 10),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(devices[i].staffName ?? 'Bilinmeyen kullanıcı',
+                                    style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13, color: AppColors.brown900)),
+                                Text('${devices[i].shortId}   ·   ${_seen(devices[i].lastSeenAt)}',
+                                    style: const TextStyle(fontSize: 11, color: AppColors.brown400)),
+                              ],
+                            ),
+                          ),
+                          if (_busy.contains(devices[i].token))
+                            const SizedBox(width: 24, height: 24, child: Padding(
+                              padding: EdgeInsets.all(4), child: CircularProgressIndicator(strokeWidth: 2))),
+                          Switch(
+                            value: devices[i].enabled,
+                            onChanged: _busy.contains(devices[i].token) ? null : (v) => _toggle(devices[i], v),
+                            activeThumbColor: AppColors.success,
+                          ),
+                          IconButton(
+                            onPressed: () async {
+                              await _admin.remove(devices[i].token);
+                              _reload();
+                            },
+                            icon: const Icon(Icons.close, size: 16, color: AppColors.brown300),
+                            tooltip: 'Listeden çıkar',
+                          ),
+                        ],
+                      ),
+                    ),
+                ],
+              ),
+            ),
+          ],
+        );
+      },
+    );
+  }
 }

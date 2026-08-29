@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "212623614359",
+    "project_id": "ccm-barkod",
+    "storage_bucket": "ccm-barkod.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:212623614359:android:ef6ed8b0c253628aa6a4d2",
+        "android_client_info": {
+          "package_name": "com.barkodtarayici.barkod_tarayici"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDKB7z8dcM4n5exYkauIR89aetqE7B3WPo"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

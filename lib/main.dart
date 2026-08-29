@@ -6,6 +6,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import 'app_settings.dart';
 import 'config.dart';
 import 'platform_util.dart';
+import 'push_service.dart';
 import 'route_observer.dart';
 import 'theme.dart';
 import 'screens/login_screen.dart';
@@ -34,6 +35,9 @@ void main() {
       }
       await Supabase.initialize(url: supabaseUrl, publishableKey: supabaseAnonKey);
       await appSettings.load();
+      // Register this device for the nightly Günlük Özet push (Android only,
+      // no-op elsewhere). Fire-and-forget -- must never delay/kill startup.
+      unawaited(PushService.instance.init());
       runApp(const BarkodTarayiciApp());
     },
     (error, stack) => debugPrint('Uncaught async error (non-fatal): $error'),

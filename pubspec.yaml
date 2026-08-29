@@ -21,7 +21,7 @@ publish_to: 'none' # Remove this line if you wish to publish to pub.dev
 # with --split-per-abi, so the arm64 APK got a +2000 ABI offset (1.9.4+27 -> 2027).
 # Shorebird builds a universal APK with no offset, so from 1.9.5 on the build
 # number itself carries the 2xxx value -- bump it by 1 per release (2028, 2029...).
-version: 1.9.5+2028
+version: 1.9.6+2029
 
 environment:
   sdk: ^3.13.0
@@ -54,6 +54,8 @@ dependencies:
   url_launcher: ^6.3.0
   file_picker: ^12.0.0
   syncfusion_flutter_pdf: ^33.1.19
+  firebase_core: ^4.14.0
+  firebase_messaging: ^16.6.0
 
 dev_dependencies:
   flutter_test:
