@@ -39,8 +39,8 @@ plus UPDATE on `kasa_price_mismatches`) + realtime on `kasa_receipts` and
 
 ## App side
 
-Desktop-only **"Kasa"** tab (`HomeShell._idKasa`, after "Kasaya Gönder").
-`lib/kasa_repo.dart` + `lib/screens/kasa_screen.dart`, six sections, every
+Desktop-only **"İstatistik"** tab (`HomeShell._idIstatistik`, before "Ayarlar").
+`lib/kasa_repo.dart` + `lib/screens/istatistik_screen.dart`, six sections, every
 table sortable by any column (`lib/widgets/sortable_table.dart`):
 
 1. **Son İşlemler** — live receipt feed (realtime), tap → lines + payments.

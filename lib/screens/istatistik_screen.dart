@@ -9,19 +9,19 @@ import '../widgets/add_to_list_button.dart';
 import '../widgets/edit_product_button.dart';
 import '../widgets/sortable_table.dart';
 
-/// Desktop-only "Kasa" tab -- a read-only window onto the register's live
-/// sales, mirrored from INTER_BOS by the till-PC daemon (see
+/// Desktop-only "İstatistik" tab -- a read-only window onto the register's
+/// live sales, mirrored from INTER_BOS by the till-PC daemon (see
 /// lib/kasa_repo.dart). Six sections, each with fully sortable tables:
 ///   Son İşlemler · Günlük Özet · İptaller · Fiyat Uyuşmazlığı ·
 ///   Z Raporları · Ölü Stok
-class KasaScreen extends StatefulWidget {
-  const KasaScreen({super.key});
+class IstatistikScreen extends StatefulWidget {
+  const IstatistikScreen({super.key});
 
   @override
-  State<KasaScreen> createState() => _KasaScreenState();
+  State<IstatistikScreen> createState() => _IstatistikScreenState();
 }
 
-class _KasaScreenState extends State<KasaScreen> with SingleTickerProviderStateMixin {
+class _IstatistikScreenState extends State<IstatistikScreen> with SingleTickerProviderStateMixin {
   final _repo = KasaRepo();
   late final TabController _tab = TabController(length: 6, vsync: this);
 
