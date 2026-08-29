@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'data_repo.dart';
 import 'local_db.dart';
 import 'models.dart';
 
@@ -282,6 +283,37 @@ class KasaRepo {
       'p_require_history': requireHistory,
     }).timeout(const Duration(seconds: 15));
     return (rows as List).map((r) => KasaDeadStockItem.fromJson(r as Map<String, dynamic>)).toList();
+  }
+
+  // ---- receipt notes (staff-added, bound to belge_id) -----------------
+
+  /// Live map of every receipt note, keyed by `belge_id`. Small table (only
+  /// annotated receipts), so streaming the whole thing is fine -- lets a note
+  /// added on one client show on every screen that lists that receipt.
+  Stream<Map<String, KasaReceiptNote>> watchReceiptNotes() {
+    return _client
+        .from('kasa_receipt_notes')
+        .stream(primaryKey: ['belge_id'])
+        .map((rows) => {
+              for (final r in rows)
+                (r['belge_id'] as String): KasaReceiptNote.fromJson(r),
+            });
+  }
+
+  /// Sets (or, with an empty string, clears) the note for one receipt.
+  Future<void> setReceiptNote(String belgeId, String note) async {
+    final trimmed = note.trim();
+    if (trimmed.isEmpty) {
+      await _client.from('kasa_receipt_notes').delete().eq('belge_id', belgeId);
+      return;
+    }
+    final by = await DataRepo().getStaffName();
+    await _client.from('kasa_receipt_notes').upsert({
+      'belge_id': belgeId,
+      'note': trimmed,
+      'updated_by': by,
+      'updated_at': DateTime.now().toUtc().toIso8601String(),
+    }, onConflict: 'belge_id');
   }
 
   // ---- freshness -----------------------------------------------------

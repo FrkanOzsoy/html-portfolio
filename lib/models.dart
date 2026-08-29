@@ -656,6 +656,29 @@ class KasaPriceMismatch {
   bool get tillCheaper => diff < 0;
 }
 
+/// A staff note bound to a till receipt (kasa_receipt_notes), keyed by
+/// `belge_id` so it shows wherever that receipt appears.
+class KasaReceiptNote {
+  final String belgeId;
+  final String note;
+  final String? updatedBy;
+  final DateTime updatedAt;
+
+  KasaReceiptNote({
+    required this.belgeId,
+    required this.note,
+    this.updatedBy,
+    required this.updatedAt,
+  });
+
+  factory KasaReceiptNote.fromJson(Map<String, dynamic> j) => KasaReceiptNote(
+        belgeId: j['belge_id'] as String,
+        note: j['note'] as String,
+        updatedBy: (j['updated_by'] as String?)?.trim().isNotEmpty == true ? (j['updated_by'] as String).trim() : null,
+        updatedAt: DateTime.parse(j['updated_at'] as String),
+      );
+}
+
 /// Client-side aggregate of one day's receipts, for the Günlük Özet dashboard.
 class KasaDaySummary {
   final DateTime day;

@@ -27,6 +27,8 @@ class _IstatistikScreenState extends State<IstatistikScreen> with SingleTickerPr
 
   int _openMismatches = 0;
   StreamSubscription? _mismatchSub;
+  StreamSubscription? _notesSub;
+  Map<String, KasaReceiptNote> _notes = const {};
   DateTime? _lastMirroredAt;
   Timer? _freshnessTimer;
 
@@ -35,6 +37,9 @@ class _IstatistikScreenState extends State<IstatistikScreen> with SingleTickerPr
     super.initState();
     _mismatchSub = _repo.watchOpenMismatches().listen((rows) {
       if (mounted) setState(() => _openMismatches = rows.length);
+    });
+    _notesSub = _repo.watchReceiptNotes().listen((map) {
+      if (mounted) setState(() => _notes = map);
     });
     _refreshFreshness();
     _freshnessTimer = Timer.periodic(const Duration(seconds: 30), (_) => _refreshFreshness());
@@ -48,6 +53,7 @@ class _IstatistikScreenState extends State<IstatistikScreen> with SingleTickerPr
   @override
   void dispose() {
     _mismatchSub?.cancel();
+    _notesSub?.cancel();
     _freshnessTimer?.cancel();
     _tab.dispose();
     super.dispose();
@@ -104,9 +110,9 @@ class _IstatistikScreenState extends State<IstatistikScreen> with SingleTickerPr
             child: TabBarView(
               controller: _tab,
               children: [
-                _ReceiptsSection(repo: _repo),
+                _ReceiptsSection(repo: _repo, notes: _notes),
                 _DaySummarySection(repo: _repo),
-                _VoidsSection(repo: _repo),
+                _VoidsSection(repo: _repo, notes: _notes),
                 _MismatchSection(repo: _repo),
                 _ZReportsSection(repo: _repo),
                 _DeadStockSection(repo: _repo),
@@ -251,13 +257,132 @@ Future<void> _peekProduct(BuildContext context, String barcode) async {
   );
 }
 
+// ---- receipt notes (staff, bound to belge_id -- shared by Son İşlemler,
+// İptaller and the detail sheet) -------------------------------------------
+
+/// A sortable-table cell that shows a receipt's staff note (or the till's own
+/// `Notlar` in muted text as a fallback) and a "not ekle" affordance, and
+/// opens the editor on tap.
+class _NoteCell extends StatelessWidget {
+  final KasaRepo repo;
+  final KasaReceipt receipt;
+  final KasaReceiptNote? note;
+  const _NoteCell({required this.repo, required this.receipt, required this.note});
+
+  @override
+  Widget build(BuildContext context) {
+    final staff = note?.note;
+    return InkWell(
+      onTap: () => editReceiptNote(context, repo, receipt, note),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 2),
+        child: staff != null
+            ? Row(
+                children: [
+                  const Icon(Icons.sticky_note_2, size: 13, color: AppColors.mustard),
+                  const SizedBox(width: 4),
+                  Expanded(
+                    child: Text(staff,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(fontSize: 12, color: AppColors.brown800)),
+                  ),
+                ],
+              )
+            : receipt.note != null
+                ? Text('kasa: ${receipt.note}',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(fontSize: 11.5, color: AppColors.brown400, fontStyle: FontStyle.italic))
+                : const Row(
+                    children: [
+                      Icon(Icons.add, size: 12, color: AppColors.brown300),
+                      SizedBox(width: 3),
+                      Text('not', style: TextStyle(fontSize: 11.5, color: AppColors.brown300)),
+                    ],
+                  ),
+      ),
+    );
+  }
+}
+
+SortColumn<KasaReceipt> _noteColumn(KasaRepo repo, Map<String, KasaReceiptNote> notes) => SortColumn(
+      label: 'Notlar',
+      flex: 3,
+      // sort: receipts that have a staff note first
+      sortKey: (r) => notes.containsKey(r.belgeId) ? '0${notes[r.belgeId]!.note.toLowerCase()}' : '1',
+      cell: (r) => _NoteCell(repo: repo, receipt: r, note: notes[r.belgeId]),
+    );
+
+/// The one note editor -- used from every place a Fiş is shown.
+Future<void> editReceiptNote(
+  BuildContext context,
+  KasaRepo repo,
+  KasaReceipt receipt,
+  KasaReceiptNote? current,
+) async {
+  final controller = TextEditingController(text: current?.note ?? '');
+  final saved = await showDialog<bool>(
+    context: context,
+    builder: (context) => AlertDialog(
+      title: Text('Fiş #${receipt.receiptNo ?? '-'} — Not'),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text('${_dmy(receipt.soldAt)} ${_hm(receipt.soldAt)} · ${formatPrice(receipt.total)}'
+              '${receipt.isVoid ? '  ·  İPTAL' : ''}',
+              style: const TextStyle(fontSize: 12, color: AppColors.brown500)),
+          const SizedBox(height: 12),
+          TextField(
+            controller: controller,
+            autofocus: true,
+            minLines: 2,
+            maxLines: 5,
+            decoration: const InputDecoration(hintText: 'Bu fiş hakkında not…', isDense: true),
+          ),
+          if (current?.updatedBy != null) ...[
+            const SizedBox(height: 6),
+            Text('son düzenleyen: ${current!.updatedBy} · ${_dm(current.updatedAt)} ${_hm(current.updatedAt)}',
+                style: const TextStyle(fontSize: 10.5, color: AppColors.brown400)),
+          ],
+        ],
+      ),
+      actions: [
+        if (current != null)
+          TextButton(
+            onPressed: () async {
+              await repo.setReceiptNote(receipt.belgeId, '');
+              if (context.mounted) Navigator.pop(context, true);
+            },
+            style: TextButton.styleFrom(foregroundColor: AppColors.terracotta),
+            child: const Text('Sil'),
+          ),
+        TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('İptal')),
+        ElevatedButton(
+          onPressed: () async {
+            await repo.setReceiptNote(receipt.belgeId, controller.text);
+            if (context.mounted) Navigator.pop(context, true);
+          },
+          child: const Text('Kaydet'),
+        ),
+      ],
+    ),
+  );
+  controller.dispose();
+  if (saved == true && context.mounted) {
+    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Not kaydedildi.')));
+  }
+}
+
 // ===========================================================================
 // 1. Son İşlemler
 // ===========================================================================
 
 class _ReceiptsSection extends StatefulWidget {
   final KasaRepo repo;
-  const _ReceiptsSection({required this.repo});
+  final Map<String, KasaReceiptNote> notes;
+  const _ReceiptsSection({required this.repo, required this.notes});
 
   @override
   State<_ReceiptsSection> createState() => _ReceiptsSectionState();
@@ -365,9 +490,10 @@ class _ReceiptsSectionState extends State<_ReceiptsSection> {
                     style: TextStyle(color: (r.discountTotal ?? 0) > 0 ? AppColors.mustard : AppColors.brown400),
                   ),
                 ),
+                _noteColumn(widget.repo, widget.notes),
                 SortColumn(
                   label: 'Durum',
-                  flex: 1,
+                  width: 78,
                   sortKey: (r) => r.isVoid ? 1 : 0,
                   cell: (r) => r.isVoid
                       ? const _Badge('İPTAL', AppColors.terracotta)
@@ -448,8 +574,54 @@ class _ReceiptDetailSheet extends StatelessWidget {
               ),
               if (receipt.note != null) ...[
                 const SizedBox(height: 10),
-                Text('Not: ${receipt.note}', style: const TextStyle(color: AppColors.brown600, fontSize: 12.5)),
+                Text('Kasa notu: ${receipt.note}', style: const TextStyle(color: AppColors.brown500, fontSize: 12, fontStyle: FontStyle.italic)),
               ],
+              const SizedBox(height: 12),
+              StreamBuilder<Map<String, KasaReceiptNote>>(
+                stream: repo.watchReceiptNotes(),
+                builder: (context, ns) {
+                  final note = ns.data?[receipt.belgeId];
+                  return Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: note != null ? AppColors.mustard.withValues(alpha: 0.08) : AppColors.cream,
+                      borderRadius: BorderRadius.circular(AppRadius.box),
+                      border: Border.all(color: note != null ? AppColors.mustard.withValues(alpha: 0.4) : AppColors.creamBorder),
+                    ),
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Icon(Icons.sticky_note_2_outlined, size: 16, color: AppColors.mustard),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(note?.note ?? 'Bu fiş için not yok.',
+                                  style: TextStyle(
+                                      fontSize: 13,
+                                      color: note != null ? AppColors.brown900 : AppColors.brown400)),
+                              if (note?.updatedBy != null)
+                                Padding(
+                                  padding: const EdgeInsets.only(top: 3),
+                                  child: Text('${note!.updatedBy} · ${_dm(note.updatedAt)} ${_hm(note.updatedAt)}',
+                                      style: const TextStyle(fontSize: 10.5, color: AppColors.brown400)),
+                                ),
+                            ],
+                          ),
+                        ),
+                        TextButton.icon(
+                          onPressed: () => editReceiptNote(context, repo, receipt, note),
+                          icon: Icon(note != null ? Icons.edit : Icons.add, size: 15),
+                          label: Text(note != null ? 'Düzenle' : 'Not Ekle'),
+                          style: TextButton.styleFrom(foregroundColor: AppColors.mustard),
+                        ),
+                      ],
+                    ),
+                  );
+                },
+              ),
               const SizedBox(height: 18),
               if (!snap.hasData)
                 const Padding(
@@ -885,7 +1057,8 @@ class _ProductSalesTable extends StatelessWidget {
 
 class _VoidsSection extends StatefulWidget {
   final KasaRepo repo;
-  const _VoidsSection({required this.repo});
+  final Map<String, KasaReceiptNote> notes;
+  const _VoidsSection({required this.repo, required this.notes});
 
   @override
   State<_VoidsSection> createState() => _VoidsSectionState();
@@ -985,14 +1158,7 @@ class _VoidsSectionState extends State<_VoidsSection> {
                       cell: (r) => Text(r.cashierNo == null ? '-' : 'Kasiyer ${r.cashierNo}',
                           style: const TextStyle(fontSize: 12, color: AppColors.brown500)),
                     ),
-                    SortColumn(
-                      label: 'Not',
-                      flex: 2,
-                      sortKey: (r) => (r.note ?? '').toLowerCase(),
-                      cell: (r) => Text(r.note ?? '-',
-                          maxLines: 1, overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(fontSize: 12, color: AppColors.brown500)),
-                    ),
+                    _noteColumn(widget.repo, widget.notes),
                   ],
                 ),
               ],
