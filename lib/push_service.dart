@@ -21,22 +21,40 @@ class PushService {
   static final PushService instance = PushService._();
 
   bool _started = false;
+  String? _token;
 
+  bool get _supported => !kIsWeb && Platform.isAndroid;
+
+  /// One-time Firebase + FCM setup. Safe to call before login (registration
+  /// will just be retried later via [syncToken]).
   Future<void> init() async {
-    if (kIsWeb || !Platform.isAndroid || _started) return;
+    if (!_supported || _started) return;
     _started = true;
     try {
       await Firebase.initializeApp();
       FirebaseMessaging.onBackgroundMessage(_firebaseBackgroundHandler);
-
       final fm = FirebaseMessaging.instance;
       await fm.requestPermission(); // Android 13+ POST_NOTIFICATIONS prompt
-
-      final token = await fm.getToken();
-      if (token != null) await _register(token);
-      fm.onTokenRefresh.listen(_register);
+      _token = await fm.getToken();
+      fm.onTokenRefresh.listen((t) {
+        _token = t;
+        _register(t);
+      });
+      await syncToken();
     } catch (e) {
       debugPrint('PushService init failed (non-fatal): $e');
+    }
+  }
+
+  /// Re-registers the current token -- called again once the user is signed
+  /// in (the pre-login attempt fails RLS silently).
+  Future<void> syncToken() async {
+    if (!_supported) return;
+    if (Supabase.instance.client.auth.currentSession == null) return;
+    final token = _token ?? await FirebaseMessaging.instance.getToken();
+    if (token != null) {
+      _token = token;
+      await _register(token);
     }
   }
 

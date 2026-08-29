@@ -4,6 +4,7 @@ import 'package:url_launcher/url_launcher.dart';
 import '../app_settings.dart';
 import '../data_repo.dart';
 import '../platform_util.dart';
+import '../push_service.dart';
 import '../sync_engine.dart';
 import '../theme.dart';
 import '../update_checker.dart';
@@ -134,6 +135,9 @@ class _HomeShellState extends State<HomeShell> with WidgetsBindingObserver {
     // Idempotent -- safe whether we arrived here via a fresh sign-in or a
     // resumed session (main.dart skips straight to HomeShell for the latter).
     SyncEngine.instance.start();
+    // Register this (signed-in) device for the nightly push -- the attempt in
+    // main() runs before login and can't pass RLS.
+    unawaited(PushService.instance.syncToken());
     WidgetsBinding.instance.addObserver(this);
     WidgetsBinding.instance.addPostFrameCallback((_) => _checkForUpdate());
     _pendingChangesSub = _repo.watchAllPendingChanges().listen((entries) {
