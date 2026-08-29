@@ -1,15 +1,115 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import '../data_repo.dart';
 import '../format.dart';
 import '../kasa_repo.dart';
 import '../models.dart';
+import '../platform_util.dart';
 import '../theme.dart';
 import '../widgets/add_to_list_button.dart';
 import '../widgets/edit_product_button.dart';
 import '../widgets/sortable_table.dart';
 
-/// Desktop-only "İstatistik" tab -- a read-only window onto the register's
+// ===========================================================================
+// Mobile: İstatistik is behind a one-time PIN. Once entered it stays unlocked
+// on that device (like staying logged in).
+// ===========================================================================
+
+const _kIstatistikPin = '159951';
+const _kIstatistikUnlockedKey = 'istatistik_unlocked';
+
+class MobileIstatistikGate extends StatefulWidget {
+  const MobileIstatistikGate({super.key});
+
+  @override
+  State<MobileIstatistikGate> createState() => _MobileIstatistikGateState();
+}
+
+class _MobileIstatistikGateState extends State<MobileIstatistikGate> {
+  bool? _unlocked;
+  final _controller = TextEditingController();
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    SharedPreferences.getInstance().then((p) {
+      if (mounted) setState(() => _unlocked = p.getBool(_kIstatistikUnlockedKey) ?? false);
+    });
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  Future<void> _submit() async {
+    if (_controller.text.trim() == _kIstatistikPin) {
+      final p = await SharedPreferences.getInstance();
+      await p.setBool(_kIstatistikUnlockedKey, true);
+      if (mounted) setState(() => _unlocked = true);
+    } else {
+      setState(() => _error = 'Şifre yanlış.');
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_unlocked == null) {
+      return const Center(child: CircularProgressIndicator());
+    }
+    if (_unlocked!) return const IstatistikScreen();
+
+    return SafeArea(
+      child: Center(
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.all(28),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Icon(Icons.lock_outline, size: 40, color: AppColors.brown400),
+              const SizedBox(height: 12),
+              const Text('İstatistik Şifresi',
+                  style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18, color: AppColors.brown900)),
+              const SizedBox(height: 4),
+              const Text('Şifre bu cihazda bir kez sorulur.',
+                  style: TextStyle(color: AppColors.brown500, fontSize: 12.5)),
+              const SizedBox(height: 20),
+              TextField(
+                controller: _controller,
+                autofocus: true,
+                obscureText: true,
+                keyboardType: TextInputType.number,
+                inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+                textAlign: TextAlign.center,
+                style: const TextStyle(fontSize: 20, letterSpacing: 6),
+                decoration: InputDecoration(
+                  hintText: '••••••',
+                  errorText: _error,
+                  isDense: true,
+                ),
+                onChanged: (_) {
+                  if (_error != null) setState(() => _error = null);
+                },
+                onSubmitted: (_) => _submit(),
+              ),
+              const SizedBox(height: 16),
+              SizedBox(
+                width: double.infinity,
+                child: ElevatedButton(onPressed: _submit, child: const Text('Aç')),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// The "İstatistik" tab -- a read-only window onto the register's
 /// live sales, mirrored from INTER_BOS by the till-PC daemon (see
 /// lib/kasa_repo.dart). Six sections, each with fully sortable tables:
 ///   Son İşlemler · Günlük Özet · İptaller · Fiyat Uyuşmazlığı ·
@@ -69,40 +169,54 @@ class _IstatistikScreenState extends State<IstatistikScreen> with SingleTickerPr
             decoration: const BoxDecoration(
               border: Border(bottom: BorderSide(color: AppColors.creamBorder)),
             ),
-            child: Row(
+            child: Column(
               children: [
-                Expanded(
-                  child: TabBar(
-                    controller: _tab,
-                    isScrollable: true,
-                    tabAlignment: TabAlignment.start,
-                    labelColor: AppColors.terracotta,
-                    unselectedLabelColor: AppColors.brown600,
-                    indicatorColor: AppColors.terracotta,
-                    labelStyle: const TextStyle(fontWeight: FontWeight.w700, fontSize: 13.5),
-                    tabs: [
-                      const Tab(text: 'Son İşlemler'),
-                      const Tab(text: 'Günlük Özet'),
-                      const Tab(text: 'İptaller'),
-                      Tab(
-                        child: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            const Text('Fiyat Uyuşmazlığı'),
-                            if (_openMismatches > 0) ...[
-                              const SizedBox(width: 6),
-                              _CountPill(_openMismatches, color: AppColors.terracotta),
-                            ],
-                          ],
-                        ),
+                Row(
+                  children: [
+                    Expanded(
+                      child: TabBar(
+                        controller: _tab,
+                        isScrollable: true,
+                        tabAlignment: TabAlignment.start,
+                        labelColor: AppColors.terracotta,
+                        unselectedLabelColor: AppColors.brown600,
+                        indicatorColor: AppColors.terracotta,
+                        labelStyle: const TextStyle(fontWeight: FontWeight.w700, fontSize: 13.5),
+                        tabs: [
+                          const Tab(text: 'Son İşlemler'),
+                          const Tab(text: 'Günlük Özet'),
+                          const Tab(text: 'İptaller'),
+                          Tab(
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                const Text('Fiyat Uyuşmazlığı'),
+                                if (_openMismatches > 0) ...[
+                                  const SizedBox(width: 6),
+                                  _CountPill(_openMismatches, color: AppColors.terracotta),
+                                ],
+                              ],
+                            ),
+                          ),
+                          const Tab(text: 'Z Raporları'),
+                          const Tab(text: 'Ölü Stok'),
+                        ],
                       ),
-                      const Tab(text: 'Z Raporları'),
-                      const Tab(text: 'Ölü Stok'),
+                    ),
+                    if (isDesktopPlatform) ...[
+                      _FreshnessChip(at: _lastMirroredAt),
+                      const SizedBox(width: 12),
                     ],
-                  ),
+                  ],
                 ),
-                _FreshnessChip(at: _lastMirroredAt),
-                const SizedBox(width: 12),
+                if (!isDesktopPlatform)
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 0, 16, 6),
+                    child: Align(
+                      alignment: Alignment.centerRight,
+                      child: _FreshnessChip(at: _lastMirroredAt),
+                    ),
+                  ),
               ],
             ),
           ),

@@ -1,8 +1,14 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 import '../data_repo.dart';
+import '../platform_util.dart';
 import '../theme.dart';
 import 'home_shell.dart';
+
+/// The fixed staff list mobile devices pick from at first login (instead of
+/// typing a name). Still one shared auth account -- this only sets the local
+/// display name used for chat / the activity log. Desktop keeps free text.
+const kStaffProfiles = ['Ahmet', 'Osman', 'Ramazan', 'Furkan', 'Çoban'];
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -28,7 +34,7 @@ class _LoginScreenState extends State<LoginScreen> {
 
       final existingName = await _repo.getStaffName();
       if (existingName == null) {
-        final name = await _promptForName();
+        final name = isDesktopPlatform ? await _promptForName() : await _promptForProfile();
         if (name == null) {
           // User backed out of the name prompt -- stay on the login screen
           // rather than entering the app with no identity for chat/logs.
@@ -48,6 +54,53 @@ class _LoginScreenState extends State<LoginScreen> {
     } finally {
       if (mounted) setState(() => _loading = false);
     }
+  }
+
+  /// Mobile, first login only: pick one of the fixed staff profiles. Same
+  /// role as [_promptForName] on desktop -- sets the local display name.
+  Future<String?> _promptForProfile() async {
+    return showDialog<String>(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => AlertDialog(
+        title: const Text('Kim kullanıyor?'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            for (final p in kStaffProfiles)
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: 4),
+                child: SizedBox(
+                  width: double.infinity,
+                  child: OutlinedButton(
+                    onPressed: () => Navigator.of(context).pop(p),
+                    style: OutlinedButton.styleFrom(
+                      padding: const EdgeInsets.symmetric(vertical: 16),
+                      side: const BorderSide(color: AppColors.brown300, width: 1.5),
+                      alignment: Alignment.centerLeft,
+                    ),
+                    child: Row(
+                      children: [
+                        CircleAvatar(
+                          radius: 15,
+                          backgroundColor: AppColors.terracotta.withValues(alpha: 0.15),
+                          child: Text(p.characters.first,
+                              style: const TextStyle(color: AppColors.terracotta, fontWeight: FontWeight.bold)),
+                        ),
+                        const SizedBox(width: 12),
+                        Text(p, style: const TextStyle(fontSize: 16, color: AppColors.brown900, fontWeight: FontWeight.w600)),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+          ],
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.of(context).pop(null), child: const Text('Vazgeç')),
+        ],
+      ),
+    );
   }
 
   /// First login only: staff pick a display name, used for in-app messaging

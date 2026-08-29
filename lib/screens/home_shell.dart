@@ -84,7 +84,7 @@ class _HomeShellState extends State<HomeShell> with WidgetsBindingObserver {
   // USB scanner typed straight into Ürün Ara anyway, not a webcam. Mobile
   // keeps the original order and the scanner (its primary workflow there).
   static const _desktopOrder = [_idSearch, _idLists, _idGonder, _idTerazi, _idMessages, _idIstatistik, _idAyarlar];
-  static const _mobileOrder = [_idScanner, _idSearch, _idLists, _idGonder, _idMessages];
+  static const _mobileOrder = [_idScanner, _idSearch, _idLists, _idGonder, _idMessages, _idIstatistik];
   List<int> get _tabOrder => _isDesktop ? _desktopOrder : _mobileOrder;
 
   // A phone or tablet gets the OS-native bottom tab bar; anything else
@@ -213,7 +213,7 @@ class _HomeShellState extends State<HomeShell> with WidgetsBindingObserver {
         _idGonder => const KasayaGonderScreen(),
         _idTerazi => const TeraziyeGonderScreen(),
         _idAyarlar => const SettingsScreen(),
-        _idIstatistik => const IstatistikScreen(),
+        _idIstatistik => _isDesktop ? const IstatistikScreen() : const MobileIstatistikGate(),
         _ => const MessagesScreen(),
       };
 
@@ -400,6 +400,11 @@ class _HomeShellState extends State<HomeShell> with WidgetsBindingObserver {
                   icon: Icon(Icons.chat_bubble_outline, color: AppColors.brown300),
                   selectedIcon: Icon(Icons.chat_bubble, color: Colors.white),
                   label: 'Mesajlar',
+                ),
+                const NavigationDestination(
+                  icon: Icon(Icons.insights_outlined, color: AppColors.brown300),
+                  selectedIcon: Icon(Icons.insights, color: Colors.white),
+                  label: 'İstatistik',
                 ),
               ],
             ),

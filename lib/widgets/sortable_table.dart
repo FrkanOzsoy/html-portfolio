@@ -5,7 +5,8 @@ import '../theme.dart';
 class SortColumn<T> {
   final String label;
 
-  /// Fixed pixel width. Leave null to size by [flex] within the leftover space.
+  /// Fixed pixel width. Leave null to size by [flex] within the leftover space
+  /// (wide layout) or [flex] * a base unit (narrow / horizontally-scrolled).
   final double? width;
   final int flex;
 
@@ -27,11 +28,14 @@ class SortColumn<T> {
     this.flex = 1,
     this.numeric = false,
   });
+
+  double get _scrollWidth => width ?? (flex * 108.0);
 }
 
-/// A compact, desktop-style data table where every column header is a
-/// click-to-sort control (click again to reverse), matching the Ürün Ara /
-/// Listelerim tables. Striped rows, optional row tap.
+/// A compact data table where every column header is a click-to-sort control
+/// (click again to reverse). Striped rows, optional row tap. When the columns
+/// don't fit the available width (narrow phones), the whole table scrolls
+/// horizontally instead of squeezing.
 class SortableTable<T> extends StatefulWidget {
   final List<T> rows;
   final List<SortColumn<T>> columns;
@@ -100,55 +104,70 @@ class _SortableTableState<T> extends State<SortableTable<T>> {
     }
 
     final rows = _sorted;
-    return Container(
-      decoration: BoxDecoration(
-        border: Border.all(color: AppColors.creamBorder),
-        borderRadius: BorderRadius.circular(AppRadius.box),
-      ),
-      clipBehavior: Clip.antiAlias,
-      child: Column(
-        children: [
-          Container(
-            color: AppColors.brown100,
-            child: Row(children: [for (var i = 0; i < widget.columns.length; i++) _header(i)]),
+    final scrollWidth = widget.columns.fold<double>(0, (s, c) => s + c._scrollWidth);
+
+    return LayoutBuilder(
+      builder: (context, c) {
+        final fits = c.maxWidth >= scrollWidth || c.maxWidth == double.infinity;
+        final table = Container(
+          width: fits ? null : scrollWidth,
+          decoration: BoxDecoration(
+            border: Border.all(color: AppColors.creamBorder),
+            borderRadius: BorderRadius.circular(AppRadius.box),
           ),
-          for (var r = 0; r < rows.length; r++)
-            _RowInk(
-              onTap: widget.onRowTap == null ? null : () => widget.onRowTap!(rows[r]),
-              background: widget.rowTint?.call(rows[r]) ??
-                  (r.isEven ? Colors.white : AppColors.creamCard),
-              child: Row(
-                crossAxisAlignment: CrossAxisAlignment.center,
-                children: [
-                  for (final col in widget.columns)
-                    _wrap(
-                      col,
-                      Align(
-                        alignment: col.numeric ? Alignment.centerRight : Alignment.centerLeft,
-                        child: DefaultTextStyle.merge(
-                          style: const TextStyle(fontSize: 12.5, color: AppColors.brown800),
-                          child: col.cell(rows[r]),
-                        ),
-                      ),
-                    ),
-                ],
+          clipBehavior: Clip.antiAlias,
+          child: Column(
+            children: [
+              Container(
+                color: AppColors.brown100,
+                child: Row(children: [
+                  for (var i = 0; i < widget.columns.length; i++) _header(i, fits),
+                ]),
               ),
-            ),
-        ],
-      ),
+              for (var r = 0; r < rows.length; r++)
+                _RowInk(
+                  onTap: widget.onRowTap == null ? null : () => widget.onRowTap!(rows[r]),
+                  background: widget.rowTint?.call(rows[r]) ??
+                      (r.isEven ? Colors.white : AppColors.creamCard),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.center,
+                    children: [
+                      for (final col in widget.columns)
+                        _wrap(
+                          col,
+                          fits,
+                          Align(
+                            alignment: col.numeric ? Alignment.centerRight : Alignment.centerLeft,
+                            child: DefaultTextStyle.merge(
+                              style: const TextStyle(fontSize: 12.5, color: AppColors.brown800),
+                              child: col.cell(rows[r]),
+                            ),
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
+            ],
+          ),
+        );
+
+        if (fits) return table;
+        return SingleChildScrollView(scrollDirection: Axis.horizontal, child: table);
+      },
     );
   }
 
-  Widget _wrap(SortColumn<T> col, Widget child) {
+  Widget _wrap(SortColumn<T> col, bool fits, Widget child) {
     final padded = Padding(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
       child: child,
     );
+    if (!fits) return SizedBox(width: col._scrollWidth, child: padded);
     if (col.width != null) return SizedBox(width: col.width, child: padded);
     return Expanded(flex: col.flex, child: padded);
   }
 
-  Widget _header(int i) {
+  Widget _header(int i, bool fits) {
     final col = widget.columns[i];
     final active = _sortCol == i;
     final content = Padding(
@@ -173,6 +192,7 @@ class _SortableTableState<T> extends State<SortableTable<T>> {
       ),
     );
     final tappable = InkWell(onTap: () => _toggle(i), child: content);
+    if (!fits) return SizedBox(width: col._scrollWidth, child: tappable);
     if (col.width != null) return SizedBox(width: col.width, child: tappable);
     return Expanded(flex: col.flex, child: tappable);
   }
