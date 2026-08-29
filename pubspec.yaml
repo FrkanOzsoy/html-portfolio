@@ -16,7 +16,12 @@ publish_to: 'none' # Remove this line if you wish to publish to pub.dev
 # https://developer.apple.com/library/archive/documentation/General/Reference/InfoPlistKeyReference/Articles/CoreFoundationKeys.html
 # In Windows, build-name is used as the major, minor, and patch parts
 # of the product and file versions while build-number is used as the build suffix.
-version: 1.9.4+27
+#
+# Build number is now the literal Android versionCode. Older releases were built
+# with --split-per-abi, so the arm64 APK got a +2000 ABI offset (1.9.4+27 -> 2027).
+# Shorebird builds a universal APK with no offset, so from 1.9.5 on the build
+# number itself carries the 2xxx value -- bump it by 1 per release (2028, 2029...).
+version: 1.9.5+2028
 
 environment:
   sdk: ^3.13.0
@@ -106,6 +111,7 @@ flutter:
 
   assets:
     - assets/icon/
+    - shorebird.yaml
 
 flutter_launcher_icons:
   # iOS icons must stay a full opaque square -- Apple applies its own corner
