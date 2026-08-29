@@ -343,7 +343,7 @@ class LocalDb {
     final db = await _d;
     final rows = await db.rawQuery('''
       select li.*, p.pluno as p_pluno, p.stockname as p_stockname, p.price as p_price,
-             p.depno as p_depno, p.stockunit as p_stockunit
+             p.depno as p_depno, p.stockunit as p_stockunit, p.kdv_rate as p_kdv_rate
       from list_items_cache li
       left join products_cache p on p.barcode = li.barcode
       where li.list_id = ?
@@ -418,6 +418,7 @@ class LocalDb {
                 price: row['p_price'] as num?,
                 depno: row['p_depno'] as String?,
                 stockunit: row['p_stockunit'] as String?,
+                kdvRate: row['p_kdv_rate'] as num?,
               )
             : null,
       );
@@ -451,7 +452,7 @@ class LocalDb {
     final db = await _d;
     final rows = await db.rawQuery('''
       select c.*, p.pluno as p_pluno, p.stockname as p_stockname, p.price as p_price,
-             p.depno as p_depno, p.stockunit as p_stockunit
+             p.depno as p_depno, p.stockunit as p_stockunit, p.kdv_rate as p_kdv_rate
       from product_pending_changes_cache c
       left join products_cache p on p.barcode = c.barcode
       order by c.created_at desc
@@ -507,6 +508,7 @@ class LocalDb {
                 price: row['p_price'] as num?,
                 depno: row['p_depno'] as String?,
                 stockunit: row['p_stockunit'] as String?,
+                kdvRate: row['p_kdv_rate'] as num?,
               )
             : null,
       );

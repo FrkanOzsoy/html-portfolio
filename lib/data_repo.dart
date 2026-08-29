@@ -55,6 +55,23 @@ class DataRepo {
     unawaited(SyncEngine.instance.pushNow());
   }
 
+  /// Read-only history of every logged staff action, newest first -- feeds
+  /// the desktop "Ayarlar" tab's İşlem Geçmişi list. Online-only (no local
+  /// cache): it's a review screen, not something needed offline.
+  Future<List<ActivityEntry>> getActivityLog({int limit = 300}) async {
+    try {
+      final rows = await _client
+          .from('activity_log')
+          .select('created_at, user_name, action, detail')
+          .order('created_at', ascending: false)
+          .limit(limit)
+          .timeout(const Duration(seconds: 8));
+      return rows.map((r) => ActivityEntry.fromJson(r)).toList();
+    } catch (_) {
+      return [];
+    }
+  }
+
   // ---- in-app messaging (online-only -- a chat message with no recipient
   // yet online has nothing useful to reach, so this isn't queued offline) ----
 

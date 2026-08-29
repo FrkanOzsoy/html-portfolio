@@ -150,7 +150,10 @@ bool Win32Window::Create(const std::wstring& title,
 }
 
 bool Win32Window::Show() {
-  return ShowWindow(window_handle_, SW_SHOWNORMAL);
+  // Open maximized -- this is a till/office desktop app, effectively always
+  // run full-screen; the size passed to Create() is just the restored-down
+  // fallback. (SW_SHOWMAXIMIZED honours the user's later restore/resize.)
+  return ShowWindow(window_handle_, SW_SHOWMAXIMIZED);
 }
 
 // static

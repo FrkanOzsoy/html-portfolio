@@ -158,6 +158,48 @@ class ProductList {
       );
 }
 
+/// One row of the shared `activity_log` table -- every staff action that
+/// touches data logs one (see DataRepo.logAction). Surfaced read-only on
+/// the desktop "Ayarlar" tab so anyone can see who did what and when.
+class ActivityEntry {
+  final DateTime at;
+  final String userName;
+  final String action;
+  final String? detail;
+
+  ActivityEntry({required this.at, required this.userName, required this.action, this.detail});
+
+  factory ActivityEntry.fromJson(Map<String, dynamic> json) => ActivityEntry(
+        at: DateTime.parse(json['created_at'] as String),
+        userName: (json['user_name'] as String?)?.trim().isNotEmpty == true
+            ? (json['user_name'] as String).trim()
+            : 'Bilinmiyor',
+        action: json['action'] as String? ?? '',
+        detail: (json['detail'] as String?)?.trim().isNotEmpty == true ? (json['detail'] as String).trim() : null,
+      );
+
+  /// Human-readable Turkish label for the raw action code.
+  String get label => switch (action) {
+        'giris_yapildi' => 'Giriş yaptı',
+        'liste_olusturuldu' => 'Liste oluşturdu',
+        'liste_silindi' => 'Liste sildi',
+        'liste_geri_eklendi' => 'Silinen listeyi geri aldı',
+        'liste_alanlari_guncellendi' => 'Liste alanlarını değiştirdi',
+        'urun_listeye_eklendi' => 'Ürünü listeye ekledi',
+        'urun_listeden_silindi' => 'Ürünü listeden çıkardı',
+        'urun_listeye_geri_eklendi' => 'Çıkarılan ürünü geri aldı',
+        'urun_guncellendi' => 'Liste ürününü düzenledi',
+        'fiyat_guncelleme_istegi' => 'Fiyat değişikliği gönderdi',
+        'urun_alani_guncelleme_istegi' => 'Ürün bilgisi değişikliği gönderdi',
+        'kasaya_gonderildi' => 'Değişikliği kasaya gönderdi',
+        'yeni_urun_istegi' => 'Yeni ürün oluşturdu',
+        'urun_silme_istegi' => 'Ürün silme isteği gönderdi',
+        'etiket_yazdirma_istegi' => 'Etiket yazdırdı',
+        'teraziye_gonderim_istegi' => 'Teraziye liste gönderdi',
+        _ => action.replaceAll('_', ' '),
+      };
+}
+
 class ChatMessage {
   final String id;
   final String senderName;

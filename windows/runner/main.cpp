@@ -26,9 +26,10 @@ int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE prev,
 
   FlutterWindow window(project);
   Win32Window::Point origin(10, 10);
-  // 16:9, sized for a real desktop window rather than a phone screen
-  // blown up -- gives the Excel-style Ürün Ara table room to breathe.
-  Win32Window::Size size(1600, 900);
+  // The window opens maximized (see Win32Window::Show); this is only the
+  // "restored down" size the user gets when they un-maximize -- 1366x768,
+  // the most common till/office screen, still roomy for the Ürün Ara table.
+  Win32Window::Size size(1366, 768);
   if (!window.Create(L"barkod_tarayici", origin, size)) {
     return EXIT_FAILURE;
   }

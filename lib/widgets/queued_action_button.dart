@@ -32,6 +32,11 @@ class QueuedActionButton extends StatefulWidget {
   /// client-side 'timeout') -- e.g. to clear form state on success.
   final void Function(String finalStatus)? onFinished;
 
+  /// Inner padding of the button itself -- bumped up where the button is
+  /// the screen's single primary action (e.g. the Teraziye Gönder screen's
+  /// pinned send buttons) so it doesn't read as a thin strip.
+  final EdgeInsetsGeometry padding;
+
   const QueuedActionButton({
     super.key,
     required this.icon,
@@ -41,6 +46,7 @@ class QueuedActionButton extends StatefulWidget {
     this.enabled = true,
     this.color = AppColors.brown800,
     this.onFinished,
+    this.padding = const EdgeInsets.symmetric(vertical: 14),
   });
 
   @override
@@ -115,13 +121,14 @@ class _QueuedActionButtonState extends State<QueuedActionButton> {
   @override
   Widget build(BuildContext context) {
     return Column(
+      mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         ElevatedButton.icon(
           onPressed: _busy || !widget.enabled ? null : _fire,
           style: ElevatedButton.styleFrom(
             backgroundColor: widget.color,
-            padding: const EdgeInsets.symmetric(vertical: 14),
+            padding: widget.padding,
           ),
           icon: _busy
               ? const SizedBox(

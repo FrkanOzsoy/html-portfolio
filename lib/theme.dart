@@ -64,9 +64,13 @@ extension ListKindColorX on ListKind {
 /// layouts (scanner, Ürün Ara, Listelerim). Buttons/fields that already set
 /// their own padding inline are unaffected (widget-level style wins over
 /// the theme default), same as on mobile.
-ThemeData buildAppTheme({bool desktop = false}) {
+ThemeData buildAppTheme({bool desktop = false, bool compact = false}) {
   return ThemeData(
     useMaterial3: true,
+    // "Sıkışık" density (Ayarlar tab) -- pulls in Material control sizing
+    // app-wide (buttons, list tiles, checkboxes, inputs); the hand-tuned
+    // desktop tables read appSettings.compact directly for their row height.
+    visualDensity: compact ? VisualDensity.compact : VisualDensity.standard,
     scaffoldBackgroundColor: AppColors.cream,
     colorScheme: ColorScheme.fromSeed(
       seedColor: AppColors.terracotta,

@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
+import '../app_settings.dart';
 import '../data_repo.dart';
 import '../platform_util.dart';
 import '../sync_engine.dart';
@@ -15,6 +16,7 @@ import 'kasaya_gonder_screen.dart';
 import 'messages_screen.dart';
 import 'pending_ops_debug_screen.dart';
 import 'product_create_screen.dart';
+import 'settings_screen.dart';
 import '../widgets/responsive_body.dart';
 
 class HomeShell extends StatefulWidget {
@@ -39,17 +41,28 @@ class _HomeShellState extends State<HomeShell> with WidgetsBindingObserver {
   static const _idLists = 2;
   static const _idGonder = 3;
   static const _idMessages = 4;
+  // Desktop-only 6th destination -- on a phone "Teraziye Gönder" stays a
+  // tab inside Kasaya Gönder (KasayaGonderScreen's own TabBar); the wide
+  // desktop window has room to pull it out to its own top-menu entry.
+  static const _idTerazi = 5;
+  // Desktop-only 7th destination -- pinned far right (see _desktopOrder).
+  static const _idAyarlar = 6;
 
-  static const _titles = ['Tarayıcı', 'Ürün Ara', 'Listelerim', 'Kasaya Gönder', 'Mesajlar'];
+  static const _titles = [
+    'Tarayıcı', 'Ürün Ara', 'Listelerim', 'Kasaya Gönder', 'Mesajlar', 'Teraziye Gönder', 'Ayarlar',
+  ];
 
-  // Same five destinations feed both chrome styles below -- only how
-  // they're laid out (bottom tabs vs. a top menu bar) differs.
+  // Feeds both chrome styles below -- only how they're laid out (bottom
+  // tabs vs. a top menu bar) differs. Indexed by screen id, so the Teraziye
+  // entry is present here even though only _desktopOrder references it.
   static const _navIcons = [
     (icon: Icons.qr_code_scanner, label: 'Tarayıcı'),
     (icon: Icons.search, label: 'Ürün Ara'),
     (icon: Icons.list_alt, label: 'Listelerim'),
     (icon: Icons.point_of_sale_outlined, label: 'Gönder'),
     (icon: Icons.chat_bubble_outline, label: 'Mesajlar'),
+    (icon: Icons.monitor_weight_outlined, label: 'Terazi'),
+    (icon: Icons.settings_outlined, label: 'Ayarlar'),
   ];
 
   // Desktop staff live in Ürün Ara most of the day (that's the whole point
@@ -60,7 +73,7 @@ class _HomeShellState extends State<HomeShell> with WidgetsBindingObserver {
   // work there; a real store till reads barcodes through a physical
   // USB scanner typed straight into Ürün Ara anyway, not a webcam. Mobile
   // keeps the original order and the scanner (its primary workflow there).
-  static const _desktopOrder = [_idSearch, _idLists, _idGonder, _idMessages];
+  static const _desktopOrder = [_idSearch, _idLists, _idGonder, _idTerazi, _idMessages, _idAyarlar];
   static const _mobileOrder = [_idScanner, _idSearch, _idLists, _idGonder, _idMessages];
   List<int> get _tabOrder => _isDesktop ? _desktopOrder : _mobileOrder;
 
@@ -103,6 +116,12 @@ class _HomeShellState extends State<HomeShell> with WidgetsBindingObserver {
   @override
   void initState() {
     super.initState();
+    // Desktop honours the "Açılış Sekmesi" setting (Ayarlar tab); mobile
+    // always starts on the scanner, its primary workflow.
+    if (_isDesktop) {
+      final pos = _tabOrder.indexOf(appSettings.defaultTabId);
+      if (pos >= 0) _index = pos;
+    }
     // Idempotent -- safe whether we arrived here via a fresh sign-in or a
     // resumed session (main.dart skips straight to HomeShell for the latter).
     SyncEngine.instance.start();
@@ -175,6 +194,8 @@ class _HomeShellState extends State<HomeShell> with WidgetsBindingObserver {
         _idSearch => const SearchScreen(),
         _idLists => const ListsScreen(),
         _idGonder => const KasayaGonderScreen(),
+        _idTerazi => const TeraziyeGonderScreen(),
+        _idAyarlar => const SettingsScreen(),
         _ => const MessagesScreen(),
       };
 
@@ -397,18 +418,35 @@ class _DesktopTopMenu extends StatelessWidget {
     return Container(
       width: double.infinity,
       color: AppColors.brown900,
-      child: Row(
-        children: [
-          Expanded(
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.center,
+      child: LayoutBuilder(
+        builder: (context, c) {
+          final itemWidgets = [for (var i = 0; i < items.length; i++) _buildItem(context, i)];
+          // The centered layout only works while there's room for the tabs
+          // *and* the trailing action buttons. Below that, the whole bar
+          // scrolls horizontally so tabs never get clipped behind the
+          // buttons at a smaller (non-maximized) window size.
+          const roomy = 1240.0;
+          if (c.maxWidth >= roomy) {
+            return Row(
               children: [
-                for (var i = 0; i < items.length; i++) _buildItem(context, i),
+                Expanded(
+                  child: Row(mainAxisAlignment: MainAxisAlignment.center, children: itemWidgets),
+                ),
+                ?trailing,
+              ],
+            );
+          }
+          return SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                ...itemWidgets,
+                if (trailing != null) ...[const SizedBox(width: 20), trailing!, const SizedBox(width: 12)],
               ],
             ),
-          ),
-          ?trailing,
-        ],
+          );
+        },
       ),
     );
   }

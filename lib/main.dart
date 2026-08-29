@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'app_settings.dart';
 import 'config.dart';
 import 'platform_util.dart';
 import 'route_observer.dart';
@@ -32,6 +33,7 @@ void main() {
         databaseFactory = databaseFactoryFfi;
       }
       await Supabase.initialize(url: supabaseUrl, publishableKey: supabaseAnonKey);
+      await appSettings.load();
       runApp(const BarkodTarayiciApp());
     },
     (error, stack) => debugPrint('Uncaught async error (non-fatal): $error'),
@@ -43,15 +45,26 @@ class BarkodTarayiciApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return MaterialApp(
-      title: 'ÇÇM-Barkod Okuyucu',
-      debugShowCheckedModeBanner: false,
-      theme: buildAppTheme(desktop: isDesktopPlatform),
-      locale: const Locale('tr', 'TR'),
-      navigatorObservers: [routeObserver],
-      home: Supabase.instance.client.auth.currentSession != null
-          ? const HomeShell()
-          : const LoginScreen(),
+    // Rebuilds when the user changes a setting on the Ayarlar tab -- text
+    // scale is applied app-wide here so every screen picks it up, density
+    // flows through the theme.
+    return AnimatedBuilder(
+      animation: appSettings,
+      builder: (context, _) => MaterialApp(
+        title: 'ÇÇM-Barkod Okuyucu',
+        debugShowCheckedModeBanner: false,
+        theme: buildAppTheme(desktop: isDesktopPlatform, compact: appSettings.compact),
+        locale: const Locale('tr', 'TR'),
+        navigatorObservers: [routeObserver],
+        builder: (context, child) => MediaQuery.withClampedTextScaling(
+          minScaleFactor: appSettings.textScale,
+          maxScaleFactor: appSettings.textScale,
+          child: child!,
+        ),
+        home: Supabase.instance.client.auth.currentSession != null
+            ? const HomeShell()
+            : const LoginScreen(),
+      ),
     );
   }
 }

@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import '../app_settings.dart';
 import '../data_repo.dart';
 import '../format.dart';
 import '../models.dart';
@@ -178,6 +179,7 @@ class _SearchScreenState extends State<SearchScreen> {
   final _controller = TextEditingController();
   final _searchFocusNode = FocusNode();
   final _tableFocusNode = FocusNode();
+  final _tableScrollController = ScrollController();
   Timer? _debounce;
   List<Product> _results = [];
   bool _loading = false;
@@ -212,6 +214,7 @@ class _SearchScreenState extends State<SearchScreen> {
     _controller.dispose();
     _searchFocusNode.dispose();
     _tableFocusNode.dispose();
+    _tableScrollController.dispose();
     _debounce?.cancel();
     super.dispose();
   }
@@ -328,7 +331,13 @@ class _SearchScreenState extends State<SearchScreen> {
       final requestId = ++_searchRequestId;
       _repo.searchProducts(value).then((results) {
         if (!mounted || requestId != _searchRequestId) return;
-        setState(() { _results = results; _focusedIndex = null; });
+        setState(() {
+          _results = results;
+          // Focus the top row straight away so the bottom-bar actions work
+          // on it without ticking a checkbox first (see _actionTargets).
+          _focusedIndex = results.isEmpty ? null : 0;
+        });
+        if (_tableScrollController.hasClients) _tableScrollController.jumpTo(0);
       });
       return;
     }
@@ -355,15 +364,44 @@ class _SearchScreenState extends State<SearchScreen> {
     });
   }
 
+  // Move the keyboard-focused row and, only if it would land outside the
+  // currently visible window, jump the list by a page (so the row you just
+  // moved to sits at the edge of a fresh page) rather than nudging the
+  // scroll on every single arrow press.
+  void _moveFocus(int index, int rowCount) {
+    setState(() => _focusedIndex = index);
+    if (!_tableScrollController.hasClients) return;
+    final pos = _tableScrollController.position;
+    if (pos.maxScrollExtent <= 0 || rowCount == 0) return; // list fits, nothing to scroll
+    // All rows are the same height, so this recovers it exactly.
+    final rowH = (pos.maxScrollExtent + pos.viewportDimension) / rowCount;
+    if (rowH <= 0) return;
+    final rowTop = index * rowH;
+    final rowBottom = rowTop + rowH;
+    double? target;
+    if (rowBottom > pos.pixels + pos.viewportDimension) {
+      target = rowTop; // stepped past the bottom -> new page, focused row on top
+    } else if (rowTop < pos.pixels) {
+      target = rowBottom - pos.viewportDimension; // past the top -> focused row on bottom
+    }
+    if (target != null) {
+      _tableScrollController.animateTo(
+        target.clamp(0.0, pos.maxScrollExtent),
+        duration: const Duration(milliseconds: 160),
+        curve: Curves.easeOut,
+      );
+    }
+  }
+
   KeyEventResult _handleTableKey(KeyEvent event) {
     final rows = _sortedResults;
     if (event is! KeyDownEvent || rows.isEmpty) return KeyEventResult.ignored;
     switch (event.logicalKey) {
       case LogicalKeyboardKey.arrowDown:
-        setState(() => _focusedIndex = _focusedIndex == null ? 0 : (_focusedIndex! + 1).clamp(0, rows.length - 1));
+        _moveFocus(_focusedIndex == null ? 0 : (_focusedIndex! + 1).clamp(0, rows.length - 1), rows.length);
         return KeyEventResult.handled;
       case LogicalKeyboardKey.arrowUp:
-        setState(() => _focusedIndex = _focusedIndex == null ? 0 : (_focusedIndex! - 1).clamp(0, rows.length - 1));
+        _moveFocus(_focusedIndex == null ? 0 : (_focusedIndex! - 1).clamp(0, rows.length - 1), rows.length);
         return KeyEventResult.handled;
       case LogicalKeyboardKey.space:
         if (_focusedIndex != null) _toggleSelect(rows[_focusedIndex!].barcode);
@@ -377,8 +415,22 @@ class _SearchScreenState extends State<SearchScreen> {
     }
   }
 
+  /// What the bottom-bar actions (Yazdır / Listeye Ekle) operate on: the
+  /// checkbox selection when there is one, otherwise -- for convenience --
+  /// just the row the keyboard is currently on, so you can arrow down to a
+  /// product and act on it without ticking it first.
+  List<String> _actionTargets() {
+    if (_selectedBarcodes.isNotEmpty) return _selectedBarcodes.toList();
+    final rows = _sortedResults;
+    final i = _focusedIndex;
+    if (i != null && i >= 0 && i < rows.length) return [rows[i].barcode];
+    return const [];
+  }
+
   Future<void> _addSelectedToList() async {
-    if (_selectedBarcodes.isEmpty) return;
+    final barcodes = _actionTargets();
+    if (barcodes.isEmpty) return;
+    final hadSelection = _selectedBarcodes.isNotEmpty;
     List<ProductList> lists;
     try {
       lists = await _repo.getLists();
@@ -395,10 +447,9 @@ class _SearchScreenState extends State<SearchScreen> {
     final selectedList = await showModalBottomSheet<ProductList>(
       context: context,
       backgroundColor: Colors.transparent,
-      builder: (_) => _DesktopListPickerSheet(lists: lists, count: _selectedBarcodes.length),
+      builder: (_) => _DesktopListPickerSheet(lists: lists, count: barcodes.length),
     );
     if (selectedList == null || !mounted) return;
-    final barcodes = _selectedBarcodes.toList();
     var successCount = 0;
     for (final barcode in barcodes) {
       try {
@@ -412,13 +463,13 @@ class _SearchScreenState extends State<SearchScreen> {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('$successCount/${barcodes.length} ürün "${selectedList.name}" listesine eklendi.')),
       );
-      setState(() => _selectedBarcodes.clear());
+      if (hadSelection) setState(() => _selectedBarcodes.clear());
     }
   }
 
   Future<void> _printSelected() async {
-    if (_selectedBarcodes.isEmpty) return;
-    final barcodes = _selectedBarcodes.toList();
+    final barcodes = _actionTargets();
+    if (barcodes.isEmpty) return;
     for (final barcode in barcodes) {
       unawaited(_repo.requestLabelPrint(barcode, 1));
     }
@@ -472,32 +523,37 @@ class _SearchScreenState extends State<SearchScreen> {
                     ),
                   ),
                 ),
-                const SizedBox(width: 8),
-                // Desktop sorts by clicking the table's own column headers
-                // (see _sortHeaderCell) -- this button is mobile's
-                // equivalent, since the card list has no headers to click.
-                if (!desktop && _results.isNotEmpty)
+                // Mobile only: a sort button (desktop sorts via the table's
+                // clickable column headers) and a "new product" shortcut
+                // (desktop has "Yeni Ürün Oluştur" in the top menu already,
+                // so the inline + is just clutter there).
+                if (!desktop) ...[
+                  const SizedBox(width: 8),
+                  if (_results.isNotEmpty) ...[
+                    SquareIconButton(
+                      icon: Icons.sort,
+                      color: _sortField != null ? AppColors.terracotta : AppColors.brown700,
+                      tooltip: 'Sırala',
+                      size: 48,
+                      onPressed: _showSortSheet,
+                    ),
+                    const SizedBox(width: 8),
+                  ],
                   SquareIconButton(
-                    icon: Icons.sort,
-                    color: _sortField != null ? AppColors.terracotta : AppColors.brown700,
-                    tooltip: 'Sırala',
+                    icon: Icons.add_circle_outline,
+                    color: AppColors.brown700,
+                    tooltip: 'Yeni Ürün Oluştur',
                     size: 48,
-                    onPressed: _showSortSheet,
-                  ),
-                if (!desktop && _results.isNotEmpty) const SizedBox(width: 8),
-                SquareIconButton(
-                  icon: Icons.add_circle_outline,
-                  color: AppColors.brown700,
-                  tooltip: 'Yeni Ürün Oluştur',
-                  size: 48,
-                  onPressed: () => Navigator.of(context).push(
-                    MaterialPageRoute(
-                      builder: (_) => ProductCreateScreen(
-                        initialBarcode: RegExp(r'^\d+$').hasMatch(_controller.text.trim()) ? _controller.text.trim() : null,
+                    onPressed: () => Navigator.of(context).push(
+                      MaterialPageRoute(
+                        builder: (_) => ProductCreateScreen(
+                          initialBarcode:
+                              RegExp(r'^\d+$').hasMatch(_controller.text.trim()) ? _controller.text.trim() : null,
+                        ),
                       ),
                     ),
                   ),
-                ),
+                ],
               ],
             ),
             const SizedBox(height: 12),
@@ -609,9 +665,13 @@ class _SearchScreenState extends State<SearchScreen> {
             // start on rendered text, plain taps still reach the InkWell.
             Expanded(
               child: SelectionArea(
-                child: ListView.builder(
-                  itemCount: _sortedResults.length,
-                  itemBuilder: (context, i) => _buildDesktopRow(i),
+                child: ListenableBuilder(
+                  listenable: appSettings,
+                  builder: (context, _) => ListView.builder(
+                    controller: _tableScrollController,
+                    itemCount: _sortedResults.length,
+                    itemBuilder: (context, i) => _buildDesktopRow(i),
+                  ),
                 ),
               ),
             ),
@@ -643,7 +703,7 @@ class _SearchScreenState extends State<SearchScreen> {
           color: focused ? AppColors.terracotta.withValues(alpha: 0.12) : (i.isEven ? Colors.white : AppColors.creamCard),
           border: const Border(bottom: BorderSide(color: AppColors.creamBorder, width: 0.5)),
         ),
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 9),
+        padding: EdgeInsets.symmetric(horizontal: 10, vertical: appSettings.rowVerticalPadding),
         child: Row(
           children: [
             SizedBox(
@@ -706,23 +766,27 @@ class _SearchScreenState extends State<SearchScreen> {
 
   Widget _buildDesktopBottomBar() {
     final hasSelection = _selectedBarcodes.isNotEmpty;
+    // With nothing ticked, the actions fall back to the focused row (see
+    // _actionTargets) so they're still usable straight off the keyboard.
+    final canAct = _actionTargets().isNotEmpty;
     return Padding(
       padding: const EdgeInsets.only(top: 12),
       child: Row(
         children: [
-          if (hasSelection)
-            Padding(
-              padding: const EdgeInsets.only(right: 12),
-              child: Text(
-                '${_selectedBarcodes.length} ürün seçili',
-                style: const TextStyle(color: AppColors.brown500, fontWeight: FontWeight.w600, fontSize: 13),
-              ),
+          Padding(
+            padding: const EdgeInsets.only(right: 12),
+            child: Text(
+              hasSelection
+                  ? '${_selectedBarcodes.length} ürün seçili'
+                  : (canAct ? 'Odaktaki ürün' : ''),
+              style: const TextStyle(color: AppColors.brown500, fontWeight: FontWeight.w600, fontSize: 13),
             ),
+          ),
           const Spacer(),
           SizedBox(
             width: 180,
             child: OutlinedButton.icon(
-              onPressed: hasSelection ? _printSelected : null,
+              onPressed: canAct ? _printSelected : null,
               style: OutlinedButton.styleFrom(
                 side: const BorderSide(color: AppColors.brown300, width: 2),
                 padding: const EdgeInsets.symmetric(vertical: 14),
@@ -735,7 +799,7 @@ class _SearchScreenState extends State<SearchScreen> {
           SizedBox(
             width: 200,
             child: ElevatedButton.icon(
-              onPressed: hasSelection ? _addSelectedToList : null,
+              onPressed: canAct ? _addSelectedToList : null,
               style: ElevatedButton.styleFrom(backgroundColor: AppColors.brown800, padding: const EdgeInsets.symmetric(vertical: 14)),
               icon: const Icon(Icons.playlist_add, size: 18),
               label: const Text('Listeye Ekle'),

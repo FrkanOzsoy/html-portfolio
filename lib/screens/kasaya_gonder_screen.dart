@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../data_repo.dart';
 import '../format.dart';
 import '../models.dart';
+import '../platform_util.dart';
 import '../theme.dart';
 import '../widgets/queued_action_button.dart';
 import '../widgets/server_action_button.dart';
@@ -219,6 +220,13 @@ class _KasayaGonderScreenState extends State<KasayaGonderScreen> with SingleTick
 
   @override
   Widget build(BuildContext context) {
+    // On desktop "Teraziye Gönder" is its own top-menu destination
+    // (home_shell.dart's _idTerazi -> TeraziyeGonderScreen), so this screen
+    // is just the Kasaya Gönder side -- no inner TabBar. The phone keeps
+    // both as tabs here since it has no room for a 6th bottom-nav entry.
+    if (isDesktopPlatform) {
+      return SafeArea(child: _buildKasayaTab());
+    }
     return SafeArea(
       child: Column(
         children: [
@@ -470,6 +478,17 @@ class _KasayaGonderScreenState extends State<KasayaGonderScreen> with SingleTick
   }
 }
 
+/// Desktop-only standalone screen for the Teraziye Gönder flow -- on a
+/// phone this same [_TeraziyeGonderTab] lives as the second tab inside
+/// [KasayaGonderScreen]; on desktop it's a top-menu destination of its own
+/// (home_shell.dart's _idTerazi).
+class TeraziyeGonderScreen extends StatelessWidget {
+  const TeraziyeGonderScreen({super.key});
+
+  @override
+  Widget build(BuildContext context) => const SafeArea(child: _TeraziyeGonderTab());
+}
+
 enum _TeraziyeMode { teraziOnly, kasaVeTerazi }
 
 /// Per-item editable working copy for the Teraziye Gönder flow -- plain
@@ -516,8 +535,23 @@ class _TeraziyeGonderTabState extends State<_TeraziyeGonderTab> {
   ProductList? _selectedList;
   List<ListItem> _items = [];
   bool _itemsLoading = false;
-  _TeraziyeMode _mode = _TeraziyeMode.teraziOnly;
   final Map<String, _TeraziyeItemState> _itemStates = {};
+
+  @override
+  void initState() {
+    super.initState();
+    // Open on MANAV by default -- it's the list staff reach for most, and
+    // landing on a blank "Liste seçin" every time was an extra click every
+    // single visit. Falls back to whatever's first if MANAV isn't present.
+    _listsFuture.then((lists) {
+      if (!mounted || lists.isEmpty || _selectedListId != null) return;
+      final manav = lists.firstWhere(
+        (l) => l.name.toUpperCase() == 'MANAV',
+        orElse: () => lists.first,
+      );
+      _selectList(manav);
+    });
+  }
 
   @override
   void dispose() {
@@ -540,6 +574,11 @@ class _TeraziyeGonderTabState extends State<_TeraziyeGonderTab> {
     });
     final items = await _repo.getListItems(list.id);
     if (!mounted) return;
+    // Scale lists are worked through in PLU order (that's how they're laid
+    // out on the physical scale's key sheet), so default to that rather
+    // than the scanned_at order getListItems returns.
+    int pluOf(ListItem it) => int.tryParse('${it.customData['plu'] ?? ''}') ?? 1 << 30;
+    items.sort((a, b) => pluOf(a).compareTo(pluOf(b)));
     setState(() {
       _items = items;
       _itemsLoading = false;
@@ -549,13 +588,13 @@ class _TeraziyeGonderTabState extends State<_TeraziyeGonderTab> {
     });
   }
 
-  Future<int> _submit() async {
+  Future<int> _submit(_TeraziyeMode mode) async {
     final list = _selectedList;
     if (list == null) throw StateError('Liste seçilmedi');
     // No per-item selection any more -- the whole list goes, every time
     // (see the removed Checkbox in _TeraziyeItemCard).
 
-    if (_mode == _TeraziyeMode.kasaVeTerazi) {
+    if (mode == _TeraziyeMode.kasaVeTerazi) {
       // Only name/price are things Digisoft's side actually supports
       // editing right now -- barcode has no field-update path server-side
       // yet, so it only ever reaches the scale export below.
@@ -589,6 +628,11 @@ class _TeraziyeGonderTabState extends State<_TeraziyeGonderTab> {
   @override
   Widget build(BuildContext context) {
     return Column(
+      // stretch (not the default center) so the pinned send-button bar
+      // below always gets a tight, bounded width -- without it the Row of
+      // Expanded buttons inside could end up unconstrained and vanish at
+      // some window sizes. Matches _buildKasayaTab's own column.
+      crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         Expanded(
           child: SingleChildScrollView(
@@ -661,28 +705,6 @@ class _TeraziyeGonderTabState extends State<_TeraziyeGonderTab> {
             },
           ),
           const SizedBox(height: 16),
-          Row(
-            children: [
-              Expanded(
-                child: _ModeButton(
-                  label: 'Teraziye Gönder',
-                  icon: Icons.monitor_weight_outlined,
-                  selected: _mode == _TeraziyeMode.teraziOnly,
-                  onTap: () => setState(() => _mode = _TeraziyeMode.teraziOnly),
-                ),
-              ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: _ModeButton(
-                  label: 'Kasa ve Teraziye Gönder',
-                  icon: Icons.point_of_sale,
-                  selected: _mode == _TeraziyeMode.kasaVeTerazi,
-                  onTap: () => setState(() => _mode = _TeraziyeMode.kasaVeTerazi),
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 16),
           if (_itemsLoading)
             const Padding(
               padding: EdgeInsets.symmetric(vertical: 24),
@@ -703,18 +725,19 @@ class _TeraziyeGonderTabState extends State<_TeraziyeGonderTab> {
         // Pinned outside the ScrollView so it's always reachable without
         // scrolling down through however many items the list has -- the
         // whole reason the item cards above were shrunk down to name+price.
+        // Two send buttons now instead of a top mode-toggle + one button:
+        // each is its own destination, so there's no "which mode am I in"
+        // to check before sending.
         if (_items.isNotEmpty)
           Container(
-            padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
+            padding: const EdgeInsets.fromLTRB(16, 10, 16, 16),
             decoration: BoxDecoration(
               color: AppColors.cream,
               border: Border(top: BorderSide(color: AppColors.creamBorder)),
             ),
             child: SafeArea(
               top: false,
-              child: QueuedActionButton(
-                icon: _mode == _TeraziyeMode.kasaVeTerazi ? Icons.point_of_sale : Icons.monitor_weight_outlined,
-                label: _mode == _TeraziyeMode.kasaVeTerazi ? 'Kasa ve Teraziye Gönder' : 'Teraziye Gönder',
+              child: _TeraziyeSendButtons(
                 enabled: _teraziyeSendingEnabled,
                 onSubmit: _submit,
                 watchStatus: _repo.watchEslExportStatus,
@@ -726,50 +749,57 @@ class _TeraziyeGonderTabState extends State<_TeraziyeGonderTab> {
   }
 }
 
-class _ModeButton extends StatelessWidget {
-  final String label;
-  final IconData icon;
-  final bool selected;
-  final VoidCallback onTap;
+/// The two pinned send buttons on the Teraziye Gönder screen -- laid out
+/// side by side where there's width for it (desktop) and stacked on a
+/// phone. Each drives the same [_TeraziyeGonderTabState._submit] with its
+/// own [_TeraziyeMode].
+class _TeraziyeSendButtons extends StatelessWidget {
+  final bool enabled;
+  final Future<int> Function(_TeraziyeMode mode) onSubmit;
+  final Stream<({String status, String? errorMessage})> Function(int id) watchStatus;
 
-  const _ModeButton({required this.label, required this.icon, required this.selected, required this.onTap});
+  const _TeraziyeSendButtons({
+    required this.enabled,
+    required this.onSubmit,
+    required this.watchStatus,
+  });
 
   @override
   Widget build(BuildContext context) {
-    return Material(
-      color: Colors.transparent,
-      borderRadius: BorderRadius.circular(AppRadius.box),
-      child: InkWell(
-        borderRadius: BorderRadius.circular(AppRadius.box),
-        onTap: onTap,
-        child: Container(
-          padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 8),
-          decoration: BoxDecoration(
-            color: selected ? AppColors.brown800 : Colors.transparent,
-            borderRadius: BorderRadius.circular(AppRadius.box),
-            border: Border.all(color: selected ? AppColors.brown800 : AppColors.brown300, width: 2),
-          ),
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Icon(icon, size: 18, color: selected ? Colors.white : AppColors.brown700),
-              const SizedBox(width: 6),
-              Flexible(
-                child: Text(
-                  label,
-                  textAlign: TextAlign.center,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    color: selected ? Colors.white : AppColors.brown700,
-                    fontWeight: FontWeight.w600,
-                    fontSize: 13,
-                  ),
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
+    final terazi = QueuedActionButton(
+      icon: Icons.monitor_weight_outlined,
+      label: 'Teraziye Gönder',
+      enabled: enabled,
+      padding: const EdgeInsets.symmetric(vertical: 20),
+      onSubmit: () => onSubmit(_TeraziyeMode.teraziOnly),
+      watchStatus: watchStatus,
+    );
+    final kasaVeTerazi = QueuedActionButton(
+      icon: Icons.point_of_sale,
+      label: 'Kasa ve Teraziye Gönder',
+      color: AppColors.brown900,
+      enabled: enabled,
+      padding: const EdgeInsets.symmetric(vertical: 20),
+      onSubmit: () => onSubmit(_TeraziyeMode.kasaVeTerazi),
+      watchStatus: watchStatus,
+    );
+    if (isDesktopPlatform) {
+      return Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Expanded(child: terazi),
+          const SizedBox(width: 12),
+          Expanded(child: kasaVeTerazi),
+        ],
+      );
+    }
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        terazi,
+        const SizedBox(height: 10),
+        kasaVeTerazi,
+      ],
     );
   }
 }
@@ -788,6 +818,12 @@ class _TeraziyeItemCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final plu = state.plu;
+    // Desktop's wide row left the price field stranded at a phone-sized 90px
+    // next to a name field that stretched the whole window -- proportionally
+    // it read as an afterthought. Give it real width and a bigger, bolder
+    // figure there (it's the one value staff are actually checking on the
+    // way to the scale); the phone layout is unchanged.
+    final desktop = isDesktopPlatform;
     return Container(
       margin: const EdgeInsets.only(bottom: 6),
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
@@ -800,26 +836,30 @@ class _TeraziyeItemCard extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.center,
         children: [
           Expanded(
-            flex: 3,
+            flex: desktop ? 2 : 3,
             child: TextField(
               controller: state.nameController,
-              style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14, color: AppColors.brown900),
+              style: TextStyle(
+                  fontWeight: FontWeight.bold, fontSize: desktop ? 16 : 14, color: AppColors.brown900),
               decoration: const InputDecoration(labelText: 'İsim', isDense: true),
             ),
           ),
           const SizedBox(width: 8),
           SizedBox(
-            width: 90,
+            width: desktop ? 160 : 90,
             child: TextField(
               controller: state.priceController,
               keyboardType: const TextInputType.numberWithOptions(decimal: true),
-              style: const TextStyle(fontSize: 13),
-              decoration: const InputDecoration(labelText: 'Fiyat', isDense: true),
+              style: TextStyle(
+                  fontSize: desktop ? 18 : 13,
+                  fontWeight: desktop ? FontWeight.bold : FontWeight.normal,
+                  color: AppColors.brown900),
+              decoration: const InputDecoration(labelText: 'Fiyat (₺)', isDense: true),
             ),
           ),
           if (plu != null && plu.isNotEmpty) ...[
             const SizedBox(width: 8),
-            Text('PLU $plu', style: const TextStyle(fontSize: 11, color: AppColors.brown400)),
+            Text('PLU $plu', style: TextStyle(fontSize: desktop ? 13 : 11, color: AppColors.brown400)),
           ],
         ],
       ),

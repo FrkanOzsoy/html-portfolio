@@ -1,8 +1,11 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
+import '../app_settings.dart';
 import '../data_repo.dart';
 import '../format.dart';
 import '../models.dart';
+import '../normalize.dart';
+import '../platform_util.dart';
 import '../theme.dart';
 import '../widgets/edit_product_button.dart';
 import '../widgets/export_sheet.dart';
@@ -11,6 +14,25 @@ import '../widgets/print_label_button.dart';
 import '../widgets/square_icon_button.dart';
 import '../widgets/swipe_bounce_dismiss.dart';
 import '../widgets/undo_banner.dart';
+
+// ---- desktop-only list layout (see platform_util.dart) ----
+// The phone view is a stack of cards; on a desktop window that same card is
+// mostly empty space, so there each item is a single dense row -- name /
+// barcode / fiyat / KDV in fixed columns (matching Ürün Ara's table), with
+// the per-item actions moved out to the right instead of wrapping below.
+// These widths are shared by the header row and every item row so the
+// columns line up. Mobile ignores all of this.
+const double _kBarcodeCol = 180;
+const double _kPriceCol = 110;
+const double _kKdvCol = 90;
+const double _kActionsCol = 430;
+const double _kColGap = 10;
+
+/// Which column the desktop list is sorted by -- clicking a header cell
+/// sets it (and clicking the active one again flips direction), exactly
+/// like the Ürün Ara table. Mobile has no equivalent (the card list there
+/// stays in scan order).
+enum _ListSortField { name, barcode, price, kdv }
 
 class ListDetailScreen extends StatefulWidget {
   final String listId;
@@ -24,6 +46,46 @@ class _ListDetailScreenState extends State<ListDetailScreen> {
   final _repo = DataRepo();
   ProductList? _list;
   late final Stream<List<ListItem>> _itemsStream = _repo.watchListItems(widget.listId);
+
+  // Desktop-only column sort (see _ListSortField / _DesktopListHeader).
+  _ListSortField? _sortField;
+  bool _sortAscending = true;
+
+  void _toggleSort(_ListSortField field) {
+    setState(() {
+      if (_sortField == field) {
+        _sortAscending = !_sortAscending;
+      } else {
+        _sortField = field;
+        _sortAscending = true;
+      }
+    });
+  }
+
+  List<ListItem> _sortedItems(List<ListItem> items) {
+    final field = _sortField;
+    if (field == null) return items;
+    final list = [...items];
+    int cmp(ListItem a, ListItem b) {
+      switch (field) {
+        case _ListSortField.name:
+          return normalizeTurkish(a.product?.stockname ?? '')
+              .compareTo(normalizeTurkish(b.product?.stockname ?? ''));
+        case _ListSortField.barcode:
+          final an = int.tryParse(a.barcode);
+          final bn = int.tryParse(b.barcode);
+          if (an != null && bn != null) return an.compareTo(bn);
+          return a.barcode.compareTo(b.barcode);
+        case _ListSortField.price:
+          return (a.product?.price ?? -1).compareTo(b.product?.price ?? -1);
+        case _ListSortField.kdv:
+          return (a.product?.kdvRate ?? -1).compareTo(b.product?.kdvRate ?? -1);
+      }
+    }
+
+    list.sort(cmp);
+    return _sortAscending ? list : list.reversed.toList();
+  }
 
   @override
   void initState() {
@@ -169,6 +231,33 @@ class _ListDetailScreenState extends State<ListDetailScreen> {
                                 textAlign: TextAlign.center,
                                 style: TextStyle(color: AppColors.brown500),
                               ),
+                            );
+                          }
+                          if (isDesktopPlatform) {
+                            final shown = _sortedItems(items);
+                            return Column(
+                              crossAxisAlignment: CrossAxisAlignment.stretch,
+                              children: [
+                                _DesktopListHeader(
+                                  sortField: _sortField,
+                                  ascending: _sortAscending,
+                                  onSort: _toggleSort,
+                                ),
+                                Expanded(
+                                  child: ListenableBuilder(
+                                    listenable: appSettings,
+                                    builder: (context, _) => ListView.separated(
+                                      itemCount: shown.length,
+                                      separatorBuilder: (_, _) => const SizedBox(height: 6),
+                                      itemBuilder: (context, i) => _ItemCard(
+                                        item: shown[i],
+                                        list: list,
+                                        onDelete: () => _deleteItem(shown[i]),
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              ],
                             );
                           }
                           return ListView.separated(
@@ -343,6 +432,17 @@ class _ItemCardState extends State<_ItemCard> {
     final isNumeric = widget.list.type == ListKind.restock || widget.list.type == ListKind.priceChange;
     final isPriceCheck = widget.list.type == ListKind.priceCheck;
     final hasNote = isPriceCheck && !_noteEditing && (widget.item.note ?? '').trim().isNotEmpty;
+
+    // The dense desktop row covers the two list shapes that still exist:
+    // plain (custom) tick-box lists and the legacy Fiyat Kontrol lists (a
+    // free-text note). The older Stok Yenileme / Fiyat Değişikliği kinds
+    // (no longer creatable, none left in the data) keep the phone card even
+    // on desktop, since their Miktar / Yeni Fiyat entry field has no place
+    // in the column layout.
+    if (isDesktopPlatform &&
+        (widget.list.type == ListKind.custom || widget.list.type == ListKind.priceCheck)) {
+      return _buildDesktop(context, isPriceCheck: isPriceCheck, hasNote: hasNote);
+    }
 
     return Container(
       padding: const EdgeInsets.all(14),
@@ -542,6 +642,199 @@ class _ItemCardState extends State<_ItemCard> {
     );
   }
 
+  // Desktop-only single-row layout -- see the _kBarcodeCol/etc. note at the
+  // top of the file. Same underlying state (note editing, pending-change
+  // comparison, save/delete) as the phone card above; only the arrangement
+  // differs. Columns here must match _DesktopListHeader's exactly.
+  Widget _buildDesktop(BuildContext context, {required bool isPriceCheck, required bool hasNote}) {
+    final p = widget.item.product;
+    return Container(
+      padding: EdgeInsets.symmetric(horizontal: 12, vertical: appSettings.rowVerticalPadding - 1),
+      decoration: BoxDecoration(
+        color: AppColors.creamCard,
+        borderRadius: BorderRadius.circular(AppRadius.box),
+        border: Border.all(color: AppColors.creamBorder),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
+            children: [
+              Expanded(
+                flex: 3,
+                child: Text(
+                  p?.stockname ?? 'Ürün bulunamadı',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15, color: AppColors.brown900),
+                ),
+              ),
+              const SizedBox(width: _kColGap),
+              SizedBox(
+                width: _kBarcodeCol,
+                child: SelectableText(
+                  widget.item.barcode,
+                  maxLines: 1,
+                  style: const TextStyle(
+                      fontSize: 14, fontWeight: FontWeight.w600, color: AppColors.brown700, fontFamily: 'monospace'),
+                ),
+              ),
+              const SizedBox(width: _kColGap),
+              SizedBox(
+                width: _kPriceCol,
+                child: Text(
+                  formatPrice(p?.price),
+                  style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: AppColors.brown900),
+                ),
+              ),
+              const SizedBox(width: _kColGap),
+              SizedBox(
+                width: _kKdvCol,
+                child: Text(
+                  _kdvLabel ?? '-',
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: AppColors.brown600),
+                ),
+              ),
+              const SizedBox(width: 12),
+              SizedBox(
+                width: _kActionsCol,
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: SizedBox(
+                        height: 44,
+                        child: EditProductButton(
+                          product: p,
+                          sourceListId: widget.list.id,
+                          sourceListName: widget.list.name,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 6),
+                    Expanded(
+                      child: SizedBox(height: 44, child: PrintLabelButton(barcode: widget.item.barcode)),
+                    ),
+                    if (isPriceCheck) ...[
+                      const SizedBox(width: 6),
+                      Expanded(
+                        child: SizedBox(
+                          height: 44,
+                          child: OutlinedButton.icon(
+                            onPressed: _noteEditing
+                                ? _cancelNoteEdit
+                                : () => setState(() => _noteEditing = true),
+                            style: OutlinedButton.styleFrom(
+                              side: const BorderSide(color: AppColors.brown300, width: 2),
+                              padding: const EdgeInsets.symmetric(horizontal: 6),
+                            ),
+                            icon: Icon(
+                              _noteEditing ? Icons.close : (hasNote ? Icons.edit_note : Icons.note_add_outlined),
+                              size: 18,
+                              color: AppColors.brown700,
+                            ),
+                            label: FittedBox(
+                              fit: BoxFit.scaleDown,
+                              child: Text(
+                                _noteEditing ? 'İptal' : (hasNote ? 'Not' : 'Not Ekle'),
+                                style: const TextStyle(color: AppColors.brown700),
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
+                    const SizedBox(width: 6),
+                    SquareIconButton(
+                      icon: Icons.delete_outline,
+                      color: AppColors.terracotta,
+                      tooltip: 'Sil',
+                      size: 34,
+                      onPressed: widget.onDelete,
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          if (_pending.isNotEmpty)
+            Container(
+              margin: const EdgeInsets.only(top: 8),
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+              decoration: BoxDecoration(
+                color: AppColors.mustard.withValues(alpha: 0.12),
+                borderRadius: BorderRadius.circular(AppRadius.box),
+                border: Border.all(color: AppColors.mustard.withValues(alpha: 0.4)),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  if (_pendingFor('stockname') != null)
+                    _comparisonRow(
+                      'İsim',
+                      widget.item.product?.stockname ?? '-',
+                      _pendingFor('stockname')!.newValue,
+                      () => _clearPending('stockname'),
+                    ),
+                  if (_pendingFor('price') != null)
+                    _comparisonRow(
+                      'Fiyat',
+                      formatPrice(widget.item.product?.price),
+                      formatPrice(num.tryParse(_pendingFor('price')!.newValue)),
+                      () => _clearPending('price'),
+                    ),
+                ],
+              ),
+            ),
+          if (isPriceCheck && _noteEditing) ...[
+            const SizedBox(height: 8),
+            TextField(
+              controller: _fieldController,
+              maxLines: 2,
+              autofocus: true,
+              textInputAction: TextInputAction.done,
+              onSubmitted: (_) => _save(),
+              style: const TextStyle(fontSize: 13),
+              decoration: const InputDecoration(
+                labelText: 'Not',
+                isDense: true,
+                contentPadding: EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+              ),
+            ),
+          ] else if (isPriceCheck && hasNote) ...[
+            const SizedBox(height: 8),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+              decoration: BoxDecoration(
+                color: AppColors.brown100,
+                borderRadius: BorderRadius.circular(AppRadius.box),
+                border: Border.all(color: AppColors.creamBorder),
+              ),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Expanded(
+                    child: Text(
+                      widget.item.note!,
+                      style: const TextStyle(fontSize: 13, color: AppColors.brown800),
+                    ),
+                  ),
+                  SquareIconButton(
+                    icon: Icons.close,
+                    color: AppColors.terracotta,
+                    tooltip: 'Notu Sil',
+                    size: 28,
+                    onPressed: _deleteNote,
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
   Widget _comparisonRow(String label, String oldValue, String newValue, VoidCallback onCancel) {
     return Padding(
       padding: const EdgeInsets.only(bottom: 4),
@@ -569,6 +862,67 @@ class _ItemCardState extends State<_ItemCard> {
             onPressed: onCancel,
             size: 28,
           ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Desktop-only clickable column header for the list -- mirrors Ürün Ara's
+/// table header (_sortHeaderCell in search_screen.dart). Column widths here
+/// must stay in lockstep with _ItemCardState._buildDesktop.
+class _DesktopListHeader extends StatelessWidget {
+  final _ListSortField? sortField;
+  final bool ascending;
+  final void Function(_ListSortField) onSort;
+
+  const _DesktopListHeader({required this.sortField, required this.ascending, required this.onSort});
+
+  Widget _cell(String label, _ListSortField field, {TextAlign align = TextAlign.left}) {
+    final active = sortField == field;
+    final color = active ? AppColors.terracotta : AppColors.brown800;
+    return InkWell(
+      onTap: () => onSort(field),
+      child: Row(
+        mainAxisAlignment:
+            align == TextAlign.center ? MainAxisAlignment.center : MainAxisAlignment.start,
+        children: [
+          Flexible(
+            child: Text(
+              label,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: color),
+            ),
+          ),
+          if (active) ...[
+            const SizedBox(width: 2),
+            Icon(ascending ? Icons.arrow_upward : Icons.arrow_downward, size: 14, color: AppColors.terracotta),
+          ],
+        ],
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 6),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      decoration: BoxDecoration(
+        color: AppColors.brown100,
+        borderRadius: BorderRadius.circular(AppRadius.box),
+      ),
+      child: Row(
+        children: [
+          Expanded(flex: 3, child: _cell('İsim', _ListSortField.name)),
+          const SizedBox(width: _kColGap),
+          SizedBox(width: _kBarcodeCol, child: _cell('Barkod', _ListSortField.barcode)),
+          const SizedBox(width: _kColGap),
+          SizedBox(width: _kPriceCol, child: _cell('Fiyat', _ListSortField.price)),
+          const SizedBox(width: _kColGap),
+          SizedBox(width: _kKdvCol, child: _cell('KDV', _ListSortField.kdv, align: TextAlign.center)),
+          const SizedBox(width: 12),
+          const SizedBox(width: _kActionsCol),
         ],
       ),
     );
