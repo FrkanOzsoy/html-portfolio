@@ -37,7 +37,9 @@ language sql
 security definer
 set search_path = public
 as $$
-  delete from public.kasa_product_sales_daily;
+  -- explicit WHERE: Supabase sessions run with safeupdate on, which rejects
+  -- an unqualified DELETE
+  delete from public.kasa_product_sales_daily where sale_date is not null;
 
   insert into public.kasa_product_sales_daily
     (sale_date, barcode, qty, revenue, line_count, last_sold_at)

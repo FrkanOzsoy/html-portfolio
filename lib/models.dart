@@ -345,6 +345,351 @@ class PendingProductCreate {
       );
 }
 
+// ===========================================================================
+// Kasa (INTER_BOS POS) mirror -- read-only. The till-PC daemon's kasaSync
+// module keeps these Supabase tables (kasa_*) in step with the register's
+// live sales; the app only ever SELECTs. See db/2026-08-29_kasa_mirror.sql.
+// ===========================================================================
+
+/// One till receipt (BELGE). `total`/`cashTotal`/`cardTotal` etc. are the
+/// register's own precomputed figures. `soldAt` is stored UTC; call
+/// `.toLocal()` for display.
+class KasaReceipt {
+  final int id;
+  final String belgeId;
+  final int? registerNo;
+  final int? cashierNo;
+  final String? receiptType; // FIS / ZRP / XRP
+  final int? receiptNo;
+  final DateTime soldAt;
+  final DateTime? closedAt;
+  final int? zNo;
+  final num? subtotal;
+  final num? vatTotal;
+  final num? total;
+  final num? cashTotal;
+  final num? cardTotal;
+  final num? discountTotal;
+  final num? cancelTotal;
+  final bool isVoid;
+  final String? note;
+  final int? lineCount;
+
+  KasaReceipt({
+    required this.id,
+    required this.belgeId,
+    this.registerNo,
+    this.cashierNo,
+    this.receiptType,
+    this.receiptNo,
+    required this.soldAt,
+    this.closedAt,
+    this.zNo,
+    this.subtotal,
+    this.vatTotal,
+    this.total,
+    this.cashTotal,
+    this.cardTotal,
+    this.discountTotal,
+    this.cancelTotal,
+    this.isVoid = false,
+    this.note,
+    this.lineCount,
+  });
+
+  factory KasaReceipt.fromJson(Map<String, dynamic> j) => KasaReceipt(
+        id: (j['id'] as num).toInt(),
+        belgeId: j['belge_id'] as String,
+        registerNo: (j['register_no'] as num?)?.toInt(),
+        cashierNo: (j['cashier_no'] as num?)?.toInt(),
+        receiptType: (j['receipt_type'] as String?)?.trim(),
+        receiptNo: (j['receipt_no'] as num?)?.toInt(),
+        soldAt: DateTime.parse(j['sold_at'] as String),
+        closedAt: j['closed_at'] != null ? DateTime.parse(j['closed_at'] as String) : null,
+        zNo: (j['z_no'] as num?)?.toInt(),
+        subtotal: j['subtotal'] as num?,
+        vatTotal: j['vat_total'] as num?,
+        total: j['total'] as num?,
+        cashTotal: j['cash_total'] as num?,
+        cardTotal: j['card_total'] as num?,
+        discountTotal: j['discount_total'] as num?,
+        cancelTotal: j['cancel_total'] as num?,
+        isVoid: j['is_void'] as bool? ?? false,
+        note: (j['note'] as String?)?.trim().isNotEmpty == true ? (j['note'] as String).trim() : null,
+        lineCount: (j['line_count'] as num?)?.toInt(),
+      );
+
+  /// FIS = normal sale receipt; ZRP/XRP are report documents.
+  bool get isSale => receiptType == null || receiptType == 'FIS';
+}
+
+/// One line of a till receipt (HAREKET). `name` is usually null in the
+/// source -- resolve it from the product catalog by [barcode].
+class KasaReceiptLine {
+  final int hareketId;
+  final int? receiptId;
+  final String belgeId;
+  final int? lineNo;
+  final String? lineType; // SAT (sale) / IPT (void)
+  final String? barcode;
+  final String? stockCode;
+  final int? pluno;
+  final String? name;
+  final num? qty;
+  final num? unitPrice;
+  final num? lineTotal;
+  final num? vatRate;
+  final num? discountAmount;
+  final DateTime? soldAt;
+
+  KasaReceiptLine({
+    required this.hareketId,
+    this.receiptId,
+    required this.belgeId,
+    this.lineNo,
+    this.lineType,
+    this.barcode,
+    this.stockCode,
+    this.pluno,
+    this.name,
+    this.qty,
+    this.unitPrice,
+    this.lineTotal,
+    this.vatRate,
+    this.discountAmount,
+    this.soldAt,
+  });
+
+  bool get isVoidLine => lineType == 'IPT';
+
+  factory KasaReceiptLine.fromJson(Map<String, dynamic> j) => KasaReceiptLine(
+        hareketId: (j['hareket_id'] as num).toInt(),
+        receiptId: (j['receipt_id'] as num?)?.toInt(),
+        belgeId: j['belge_id'] as String,
+        lineNo: (j['line_no'] as num?)?.toInt(),
+        lineType: (j['line_type'] as String?)?.trim(),
+        barcode: (j['barcode'] as String?)?.trim(),
+        stockCode: (j['stock_code'] as String?)?.trim(),
+        pluno: (j['pluno'] as num?)?.toInt(),
+        name: (j['name'] as String?)?.trim().isNotEmpty == true ? (j['name'] as String).trim() : null,
+        qty: j['qty'] as num?,
+        unitPrice: j['unit_price'] as num?,
+        lineTotal: j['line_total'] as num?,
+        vatRate: j['vat_rate'] as num?,
+        discountAmount: j['discount_amount'] as num?,
+        soldAt: j['sold_at'] != null ? DateTime.parse(j['sold_at'] as String) : null,
+      );
+}
+
+/// One payment against a receipt (ODEME). [method] is the daemon's best-effort
+/// classification ('nakit' / 'kart' / 'diger').
+class KasaPayment {
+  final int odemeId;
+  final int? receiptId;
+  final String belgeId;
+  final String? method;
+  final num? amount;
+  final num? paidAmount;
+
+  KasaPayment({
+    required this.odemeId,
+    this.receiptId,
+    required this.belgeId,
+    this.method,
+    this.amount,
+    this.paidAmount,
+  });
+
+  factory KasaPayment.fromJson(Map<String, dynamic> j) => KasaPayment(
+        odemeId: (j['odeme_id'] as num).toInt(),
+        receiptId: (j['receipt_id'] as num?)?.toInt(),
+        belgeId: j['belge_id'] as String,
+        method: (j['method'] as String?)?.trim(),
+        amount: j['amount'] as num?,
+        paidAmount: j['paid_amount'] as num?,
+      );
+
+  String get methodLabel => switch (method) {
+        'nakit' => 'Nakit',
+        'kart' => 'Kart',
+        _ => 'Diğer',
+      };
+}
+
+/// A daily Z report row (SERVER_ZREPORT). [turnover] is the register's own
+/// GIRO figure for that day.
+class KasaZReport {
+  final int id;
+  final int? zNo;
+  final DateTime? zDate;
+  final num? turnover;
+  final String? info;
+
+  KasaZReport({required this.id, this.zNo, this.zDate, this.turnover, this.info});
+
+  factory KasaZReport.fromJson(Map<String, dynamic> j) => KasaZReport(
+        id: (j['id'] as num).toInt(),
+        zNo: (j['z_no'] as num?)?.toInt(),
+        zDate: j['z_date'] != null ? DateTime.parse(j['z_date'] as String) : null,
+        turnover: j['turnover'] as num?,
+        info: (j['info'] as String?)?.trim().isNotEmpty == true ? (j['info'] as String).trim() : null,
+      );
+}
+
+/// One (day, barcode) sales roll-up (kasa_product_sales_daily) -- also the
+/// row shape returned by the kasa_top_products RPC (sale_date omitted there).
+class KasaProductSales {
+  final DateTime? saleDate;
+  final String barcode;
+  final num qty;
+  final num revenue;
+  final int lineCount;
+  final DateTime? lastSoldAt;
+  final Product? product; // resolved from the catalog by the repo
+
+  KasaProductSales({
+    this.saleDate,
+    required this.barcode,
+    required this.qty,
+    required this.revenue,
+    required this.lineCount,
+    this.lastSoldAt,
+    this.product,
+  });
+
+  factory KasaProductSales.fromJson(Map<String, dynamic> j) => KasaProductSales(
+        saleDate: j['sale_date'] != null ? DateTime.parse(j['sale_date'] as String) : null,
+        barcode: j['barcode'] as String,
+        qty: (j['qty'] as num?) ?? 0,
+        revenue: (j['revenue'] as num?) ?? 0,
+        lineCount: ((j['line_count'] as num?) ?? 0).toInt(),
+        lastSoldAt: j['last_sold_at'] != null ? DateTime.parse(j['last_sold_at'] as String) : null,
+      );
+
+  KasaProductSales withProduct(Product? p) => KasaProductSales(
+        saleDate: saleDate, barcode: barcode, qty: qty, revenue: revenue,
+        lineCount: lineCount, lastSoldAt: lastSoldAt, product: p,
+      );
+}
+
+/// A row from the kasa_dead_stock RPC -- a catalog product with no till sale
+/// in the requested window.
+class KasaDeadStockItem {
+  final String barcode;
+  final String stockname;
+  final num? price;
+  final String? depno;
+  final String? stockunit;
+  final DateTime? lastSoldAt;
+  final int? daysSince;
+  final num qtyWindow;
+
+  KasaDeadStockItem({
+    required this.barcode,
+    required this.stockname,
+    this.price,
+    this.depno,
+    this.stockunit,
+    this.lastSoldAt,
+    this.daysSince,
+    this.qtyWindow = 0,
+  });
+
+  factory KasaDeadStockItem.fromJson(Map<String, dynamic> j) => KasaDeadStockItem(
+        barcode: j['barcode'] as String,
+        stockname: (j['stockname'] as String?) ?? '',
+        price: j['price'] as num?,
+        depno: j['depno'] as String?,
+        stockunit: j['stockunit'] as String?,
+        lastSoldAt: j['last_sold_at'] != null ? DateTime.parse(j['last_sold_at'] as String) : null,
+        daysSince: (j['days_since'] as num?)?.toInt(),
+        qtyWindow: (j['qty_window'] as num?) ?? 0,
+      );
+}
+
+/// A detected price mismatch (kasa_price_mismatches): the till charged
+/// [tillPrice] for [barcode] while the catalog said [catalogPrice].
+class KasaPriceMismatch {
+  final int id;
+  final int hareketId;
+  final String? belgeId;
+  final String barcode;
+  final String? name;
+  final num tillPrice;
+  final num catalogPrice;
+  final num diff; // tillPrice - catalogPrice
+  final DateTime soldAt;
+  final int? receiptNo;
+  final bool resolved;
+  final DateTime detectedAt;
+
+  KasaPriceMismatch({
+    required this.id,
+    required this.hareketId,
+    this.belgeId,
+    required this.barcode,
+    this.name,
+    required this.tillPrice,
+    required this.catalogPrice,
+    required this.diff,
+    required this.soldAt,
+    this.receiptNo,
+    this.resolved = false,
+    required this.detectedAt,
+  });
+
+  factory KasaPriceMismatch.fromJson(Map<String, dynamic> j) => KasaPriceMismatch(
+        id: (j['id'] as num).toInt(),
+        hareketId: (j['hareket_id'] as num).toInt(),
+        belgeId: j['belge_id'] as String?,
+        barcode: j['barcode'] as String,
+        name: (j['name'] as String?)?.trim().isNotEmpty == true ? (j['name'] as String).trim() : null,
+        tillPrice: j['till_price'] as num,
+        catalogPrice: j['catalog_price'] as num,
+        diff: j['diff'] as num,
+        soldAt: DateTime.parse(j['sold_at'] as String),
+        receiptNo: (j['receipt_no'] as num?)?.toInt(),
+        resolved: j['resolved'] as bool? ?? false,
+        detectedAt: DateTime.parse(j['detected_at'] as String),
+      );
+
+  bool get tillCheaper => diff < 0;
+}
+
+/// Client-side aggregate of one day's receipts, for the Günlük Özet dashboard.
+class KasaDaySummary {
+  final DateTime day;
+  final int receiptCount;
+  final int voidCount;
+  final num gross;         // sum of non-void FIS totals
+  final num voidValue;     // sum of void FIS totals
+  final num cash;
+  final num card;
+  final num discount;
+  final num itemsSold;     // sum of line qty across non-void receipts
+  final List<num> byHour;  // length 24, turnover per hour
+
+  KasaDaySummary({
+    required this.day,
+    required this.receiptCount,
+    required this.voidCount,
+    required this.gross,
+    required this.voidValue,
+    required this.cash,
+    required this.card,
+    required this.discount,
+    required this.itemsSold,
+    required this.byHour,
+  });
+
+  num get avgBasket => receiptCount == 0 ? 0 : gross / receiptCount;
+
+  factory KasaDaySummary.empty(DateTime day) => KasaDaySummary(
+        day: day, receiptCount: 0, voidCount: 0, gross: 0, voidValue: 0,
+        cash: 0, card: 0, discount: 0, itemsSold: 0, byHour: List<num>.filled(24, 0),
+      );
+}
+
 /// A past send-to-kasa attempt (from either `price_update_requests` or
 /// `product_field_update_requests`) that's reached a final state -- fuels
 /// the "Eski Gönderilenler" history in the "Kasaya Gönder" tab.

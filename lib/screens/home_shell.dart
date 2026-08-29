@@ -13,6 +13,7 @@ import 'search_screen.dart';
 import 'lists_screen.dart';
 import 'bulk_price_import_screen.dart';
 import 'kasaya_gonder_screen.dart';
+import 'kasa_screen.dart';
 import 'messages_screen.dart';
 import 'pending_ops_debug_screen.dart';
 import 'product_create_screen.dart';
@@ -48,11 +49,15 @@ class _HomeShellState extends State<HomeShell> with WidgetsBindingObserver {
   // tab inside Kasaya Gönder (KasayaGonderScreen's own TabBar); the wide
   // desktop window has room to pull it out to its own top-menu entry.
   static const _idTerazi = 5;
-  // Desktop-only 7th destination -- pinned far right (see _desktopOrder).
+  // Desktop-only -- pinned far right (see _desktopOrder).
   static const _idAyarlar = 6;
+  // Desktop-only -- read-only window onto the till's live sales
+  // (INTER_BOS mirror). Sits right after "Kasaya Gönder": that one sends
+  // *to* the till, this one shows what the till *did*.
+  static const _idKasa = 7;
 
   static const _titles = [
-    'Tarayıcı', 'Ürün Ara', 'Listelerim', 'Kasaya Gönder', 'Mesajlar', 'Teraziye Gönder', 'Ayarlar',
+    'Tarayıcı', 'Ürün Ara', 'Listelerim', 'Kasaya Gönder', 'Mesajlar', 'Teraziye Gönder', 'Ayarlar', 'Kasa',
   ];
 
   // Feeds both chrome styles below -- only how they're laid out (bottom
@@ -66,6 +71,7 @@ class _HomeShellState extends State<HomeShell> with WidgetsBindingObserver {
     (icon: Icons.chat_bubble_outline, label: 'Mesajlar'),
     (icon: Icons.monitor_weight_outlined, label: 'Terazi'),
     (icon: Icons.settings_outlined, label: 'Ayarlar'),
+    (icon: Icons.receipt_long_outlined, label: 'Kasa'),
   ];
 
   // Desktop staff live in Ürün Ara most of the day (that's the whole point
@@ -76,7 +82,7 @@ class _HomeShellState extends State<HomeShell> with WidgetsBindingObserver {
   // work there; a real store till reads barcodes through a physical
   // USB scanner typed straight into Ürün Ara anyway, not a webcam. Mobile
   // keeps the original order and the scanner (its primary workflow there).
-  static const _desktopOrder = [_idSearch, _idLists, _idGonder, _idTerazi, _idMessages, _idAyarlar];
+  static const _desktopOrder = [_idSearch, _idLists, _idGonder, _idKasa, _idTerazi, _idMessages, _idAyarlar];
   static const _mobileOrder = [_idScanner, _idSearch, _idLists, _idGonder, _idMessages];
   List<int> get _tabOrder => _isDesktop ? _desktopOrder : _mobileOrder;
 
@@ -203,6 +209,7 @@ class _HomeShellState extends State<HomeShell> with WidgetsBindingObserver {
         _idGonder => const KasayaGonderScreen(),
         _idTerazi => const TeraziyeGonderScreen(),
         _idAyarlar => const SettingsScreen(),
+        _idKasa => const KasaScreen(),
         _ => const MessagesScreen(),
       };
 
@@ -432,7 +439,7 @@ class _DesktopTopMenu extends StatelessWidget {
           // *and* the trailing action buttons. Below that, the whole bar
           // scrolls horizontally so tabs never get clipped behind the
           // buttons at a smaller (non-maximized) window size.
-          const roomy = 1240.0;
+          const roomy = 1400.0;
           if (c.maxWidth >= roomy) {
             return Row(
               children: [

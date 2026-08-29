@@ -290,6 +290,7 @@ class _DefaultTabSetting extends StatelessWidget {
     (id: 1, label: 'Ürün Ara', icon: Icons.search),
     (id: 2, label: 'Listelerim', icon: Icons.list_alt),
     (id: 3, label: 'Kasaya Gönder', icon: Icons.point_of_sale_outlined),
+    (id: 7, label: 'Kasa', icon: Icons.receipt_long_outlined),
     (id: 5, label: 'Teraziye Gönder', icon: Icons.monitor_weight_outlined),
     (id: 4, label: 'Mesajlar', icon: Icons.chat_bubble_outline),
   ];
