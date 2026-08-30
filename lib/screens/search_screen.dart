@@ -13,6 +13,7 @@ import '../widgets/edit_product_button.dart';
 import '../widgets/print_label_button.dart';
 import '../widgets/square_icon_button.dart';
 import 'product_create_screen.dart';
+import 'product_edit_screen.dart';
 
 enum _SortField { name, barcode, price, unit, kdv }
 
@@ -706,7 +707,15 @@ class _SearchScreenState extends State<SearchScreen> {
     _lastRowTapIndex = i;
     setState(() => _focusedIndex = i);
     _tableFocusNode.requestFocus();
-    if (isDoubleClick) _showQuickEditDialog(context, product);
+    // Double-click opens the full editor (same as the "Düzenle" button);
+    // Enter opens the price/name quick-edit dialog (see _handleTableKey).
+    if (isDoubleClick) _openFullEditor(product);
+  }
+
+  void _openFullEditor(Product product) {
+    Navigator.of(context).push(
+      MaterialPageRoute(builder: (_) => ProductEditScreen(product: product)),
+    );
   }
 
   Widget _buildDesktopRow(int i) {
