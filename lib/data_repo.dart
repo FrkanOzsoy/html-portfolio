@@ -805,6 +805,27 @@ class DataRepo {
       if (change.field == 'price') {
         final id = await requestPriceUpdate(change.barcode, num.parse(change.newValue), oldPrice: change.product?.price);
         statusStream = watchPriceUpdateStatus(id);
+      } else if (change.field == 'barcode') {
+        // A barcode change replaces the old barcode with a new one for the
+        // same product. The request row carries barcode = OLD, new_value =
+        // NEW; the till-PC side swaps it in Digisoft/kasa and clears the
+        // stale OLD `products` row. Locally, drop OLD and pull NEW once done.
+        final oldBarcode = change.barcode;
+        final newBarcode = change.newValue;
+        final id = await requestFieldUpdate(oldBarcode, 'barcode', newBarcode, oldValue: oldBarcode);
+        statusStream = watchFieldUpdateStatus(id);
+        unawaited(statusStream
+            .firstWhere((s) => s.status == 'done' || s.status == 'error',
+                orElse: () => (status: 'error', errorMessage: null))
+            .then((s) async {
+          if (s.status == 'done') {
+            await _localDb.deleteProductLocal(oldBarcode);
+            await _refreshAfterDone(newBarcode, Stream.value((status: 'done', errorMessage: null)));
+          }
+        }));
+        await unstageChange(change.id);
+        unawaited(logAction('kasaya_gonderildi', detail: '$oldBarcode barkod -> $newBarcode'));
+        return null;
       } else {
         final oldValue = switch (change.field) {
           'stockname' => change.product?.stockname,

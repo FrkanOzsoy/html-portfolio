@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import '../data_repo.dart';
 import '../models.dart';
 import '../theme.dart';
@@ -29,9 +30,11 @@ class _ProductEditScreenState extends State<ProductEditScreen> {
   final _repo = DataRepo();
   late final TextEditingController _priceController;
   late final TextEditingController _nameController;
+  late final TextEditingController _barcodeController;
   late final Future<List<KdvDepartment>> _departmentsFuture = _repo.getKdvDepartments();
   int? _selectedDepartment;
   String? _priceError;
+  String? _barcodeError;
 
   @override
   void initState() {
@@ -39,6 +42,7 @@ class _ProductEditScreenState extends State<ProductEditScreen> {
     final p = widget.product;
     _priceController = TextEditingController(text: p.price?.toString() ?? '');
     _nameController = TextEditingController(text: p.stockname);
+    _barcodeController = TextEditingController(text: p.barcode);
     _loadStaged();
   }
 
@@ -57,6 +61,8 @@ class _ProductEditScreenState extends State<ProductEditScreen> {
           _priceController.text = c.newValue;
         case 'stockname':
           _nameController.text = c.newValue;
+        case 'barcode':
+          _barcodeController.text = c.newValue;
         case 'kasadepid':
           _selectedDepartment = int.tryParse(c.newValue);
       }
@@ -73,6 +79,7 @@ class _ProductEditScreenState extends State<ProductEditScreen> {
   void dispose() {
     _priceController.dispose();
     _nameController.dispose();
+    _barcodeController.dispose();
     super.dispose();
   }
 
@@ -85,6 +92,20 @@ class _ProductEditScreenState extends State<ProductEditScreen> {
       return false;
     }
     setState(() => _priceError = null);
+
+    final barcodeText = _barcodeController.text.trim();
+    if (barcodeText != p.barcode) {
+      if (!RegExp(r'^\d{6,13}$').hasMatch(barcodeText)) {
+        setState(() => _barcodeError = 'Barkod 6-13 haneli bir sayı olmalı.');
+        return false;
+      }
+      final existing = await _repo.lookupBarcode(barcodeText);
+      if (existing != null) {
+        setState(() => _barcodeError = 'Bu barkod zaten "${existing.stockname}" ürününde kullanılıyor.');
+        return false;
+      }
+    }
+    setState(() => _barcodeError = null);
 
     if (priceValue != p.price) {
       await _repo.stageChange(
@@ -115,6 +136,15 @@ class _ProductEditScreenState extends State<ProductEditScreen> {
         listName: widget.sourceListName,
       );
     }
+    if (barcodeText != p.barcode) {
+      await _repo.stageChange(
+        barcode: p.barcode,
+        field: 'barcode',
+        value: barcodeText,
+        listId: widget.sourceListId,
+        listName: widget.sourceListName,
+      );
+    }
     return true;
   }
 
@@ -137,12 +167,20 @@ class _ProductEditScreenState extends State<ProductEditScreen> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              SelectableText(
-                p.barcode,
-                style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: AppColors.brown600),
+              TextField(
+                controller: _barcodeController,
+                keyboardType: TextInputType.number,
+                inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+                decoration: InputDecoration(
+                  labelText: 'Barkod',
+                  isDense: true,
+                  errorText: _barcodeError,
+                  helperText: 'Değiştirirseniz eski barkod bu üründen kaldırılır.',
+                  helperStyle: const TextStyle(fontSize: 11, color: AppColors.brown400),
+                ),
               ),
               if (p.kdvRate != null) ...[
-                const SizedBox(height: 4),
+                const SizedBox(height: 8),
                 Text(
                   'Mevcut KDV: %${p.kdvRate!.toStringAsFixed(p.kdvRate! % 1 == 0 ? 0 : 2)}',
                   style: const TextStyle(fontSize: 13, color: AppColors.brown500),

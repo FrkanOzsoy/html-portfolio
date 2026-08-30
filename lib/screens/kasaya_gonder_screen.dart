@@ -24,8 +24,17 @@ String _fieldLabel(String field) => switch (field) {
       'stockname' => 'İsim',
       'stockunit' => 'Birim',
       'depno' => 'Grup',
+      'barcode' => 'Barkod',
       kDeleteField => 'Ürünü Sil',
       _ => field,
+    };
+
+/// The value being replaced, for the "old → new" line on a pending card. For
+/// a barcode change the "old" is the staged row's own barcode.
+String _oldValueDisplay(PendingChange c) => switch (c.field) {
+      'price' => formatPrice(c.product?.price),
+      'barcode' => c.barcode,
+      _ => c.product?.stockname ?? '-',
     };
 
 String _formatValue(String field, String? value) =>
@@ -1029,8 +1038,7 @@ class _PendingChangeCard extends StatelessWidget {
                       style: const TextStyle(fontSize: 12, color: AppColors.brown500),
                       children: [
                         TextSpan(
-                          text:
-                              '${_fieldLabel(change.field)}: ${change.field == 'price' ? formatPrice(change.product?.price) : (change.product?.stockname ?? '-')}  →  ',
+                          text: '${_fieldLabel(change.field)}: ${_oldValueDisplay(change)}  →  ',
                         ),
                         TextSpan(
                           text: _formatValue(change.field, change.newValue),
