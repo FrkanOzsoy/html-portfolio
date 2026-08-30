@@ -38,24 +38,27 @@ flutter build windows --release
 robocopy "C:\src\barkod\build\windows\x64\runner\Release" "C:\src\CCM-Barkod-YENI" /MIR /NP
 ```
 
-### Step 3: Deploy Android (Shorebird OTA Patch or Full APK)
+### Step 3: Deploy Android — full release, NOT a patch
 
-**Option A — Shorebird OTA Patch (Fastest for devices on 1.9.8+2031):**
+This change added new Material icons (`Icons.date_range`, `Icons.clear`,
+`Icons.arrow_drop_down`), which change the tree-shaken `MaterialIcons-Regular.otf`
+subset. Shorebird patches don't carry asset changes, so `shorebird patch` aborts
+with "app contains asset changes". Cut a full release.
+
 ```bash
 export PATH="/c/Program Files/Git/cmd:/c/shorebird/bin:/c/src/flutter/bin:$PATH"
 export JAVA_HOME="C:\\Program Files\\Microsoft\\jdk-17.0.20.101-hotspot"
 export ANDROID_SDK_ROOT="C:\\Android\\sdk"
 export PUB_CACHE="C:\\pubcache"
 
-shorebird patch android --release-version=1.9.8+2031
-```
-
-**Option B — Full APK Release (if bumping version):**
-```bash
-# Bump version in pubspec.yaml if needed, then:
+# bump pubspec version (e.g. 1.9.9+2032), then:
 shorebird release android --artifact apk --target-platform android-arm64
 
-# Upload universal APK to Supabase Storage bucket 'app-releases':
-# supabase storage cp <apk> ss:///app-releases/ccm-barkod-okuyucu-v1.9.x.apk --content-type "application/vnd.android.package-archive" --experimental --linked
-# And update the app_releases table row.
+supabase storage cp build/app/outputs/flutter-apk/app-release.apk \
+  ss:///app-releases/ccm-barkod-okuyucu-v1.9.x.apk \
+  --content-type "application/vnd.android.package-archive" --experimental --linked
+# then: update app_releases set version_code=…, version_name='…', apk_path='…', changelog='…' where id=1;
 ```
+
+Shipped as **1.9.9+2032** (2026-08-30), together with the desktop "Düzenle"
+button in Ürün Ara.
