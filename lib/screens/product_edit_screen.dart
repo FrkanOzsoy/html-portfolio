@@ -168,34 +168,21 @@ class _ProductEditScreenState extends State<ProductEditScreen> {
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               TextField(
+                controller: _nameController,
+                decoration: const InputDecoration(labelText: 'Ürün Adı', isDense: true),
+              ),
+              const SizedBox(height: 16),
+              TextField(
                 controller: _barcodeController,
                 keyboardType: TextInputType.number,
                 inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-                decoration: InputDecoration(
-                  labelText: 'Barkod',
-                  isDense: true,
-                  errorText: _barcodeError,
-                  helperText: 'Değiştirirseniz eski barkod bu üründen kaldırılır.',
-                  helperStyle: const TextStyle(fontSize: 11, color: AppColors.brown400),
-                ),
+                decoration: InputDecoration(labelText: 'Barkod', isDense: true, errorText: _barcodeError),
               ),
-              if (p.kdvRate != null) ...[
-                const SizedBox(height: 8),
-                Text(
-                  'Mevcut KDV: %${p.kdvRate!.toStringAsFixed(p.kdvRate! % 1 == 0 ? 0 : 2)}',
-                  style: const TextStyle(fontSize: 13, color: AppColors.brown500),
-                ),
-              ],
               const SizedBox(height: 16),
               TextField(
                 controller: _priceController,
                 keyboardType: const TextInputType.numberWithOptions(decimal: true),
                 decoration: InputDecoration(labelText: 'Fiyat (₺)', isDense: true, errorText: _priceError),
-              ),
-              const SizedBox(height: 16),
-              TextField(
-                controller: _nameController,
-                decoration: const InputDecoration(labelText: 'Ürün Adı', isDense: true),
               ),
               const SizedBox(height: 16),
               FutureBuilder<List<KdvDepartment>>(
