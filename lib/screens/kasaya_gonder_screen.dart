@@ -369,9 +369,7 @@ class _KasayaGonderScreenState extends State<KasayaGonderScreen> with SingleTick
                           padding: EdgeInsets.symmetric(vertical: 24),
                           child: Center(
                             child: Text(
-                              'Gönderilecek bekleyen bir şey yok.\n\n'
-                              'Ürün düzenleme, yeni ürün ve silme işlemleri buraya birikir; '
-                              'kasaya işlenmesi için buradan gönderin.',
+                              'Gönderilecek bekleyen bir şey yok.',
                               textAlign: TextAlign.center,
                               style: TextStyle(color: AppColors.brown500),
                             ),
@@ -734,11 +732,6 @@ class _TeraziyeGonderTabState extends State<_TeraziyeGonderTab> {
                 ],
               ),
             ),
-          const Text(
-            'Barkod değişiklikleri şimdilik yalnızca teraziye gidiyor, kasa tarafı henüz desteklemiyor.',
-            style: TextStyle(color: AppColors.brown500, fontSize: 12),
-          ),
-          const SizedBox(height: 16),
           FutureBuilder<List<ProductList>>(
             future: _listsFuture,
             builder: (context, snapshot) {
@@ -1152,9 +1145,7 @@ class _SentHistorySectionState extends State<_SentHistorySection> {
         ),
         if (_expanded) ...[
           const Text(
-            '"Gönderildi" = servis Digisoft\'a yazdı ve kasaya gönderdi. Bazı "hızlı '
-            'tuş" ürünlerde bu, kasa ekranının görsel olarak yenilendiğini garanti '
-            'etmez -- şüpheliyse fiziksel olarak kontrol edin.',
+            '"Gönderildi" = servis Digisoft\'a yazıp kasaya iletti.',
             style: TextStyle(color: AppColors.brown400, fontSize: 11),
           ),
           const SizedBox(height: 8),

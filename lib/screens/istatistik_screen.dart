@@ -74,9 +74,6 @@ class _MobileIstatistikGateState extends State<MobileIstatistikGate> {
               const SizedBox(height: 12),
               const Text('İstatistik Şifresi',
                   style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18, color: AppColors.brown900)),
-              const SizedBox(height: 4),
-              const Text('Şifre bu cihazda bir kez sorulur.',
-                  style: TextStyle(color: AppColors.brown500, fontSize: 12.5)),
               const SizedBox(height: 20),
               TextField(
                 controller: _controller,
@@ -1034,9 +1031,6 @@ class _DaySummarySectionState extends State<_DaySummarySection> {
         ),
         const SizedBox(height: 26),
         const Text('En Çok Satan Ürünler', style: TextStyle(fontWeight: FontWeight.bold, color: AppColors.brown800)),
-        const SizedBox(height: 4),
-        const Text('Ciroya göre. Sütun başlığına tıklayarak istediğiniz gibi sıralayın.',
-            style: TextStyle(color: AppColors.brown500, fontSize: 12)),
         const SizedBox(height: 10),
         Row(
           children: [
@@ -1441,9 +1435,7 @@ class _MismatchSectionState extends State<_MismatchSection> {
       padding: const EdgeInsets.fromLTRB(16, 14, 16, 24),
       children: [
         const Text(
-          'Kasada işlenen fiyat ile kataloğdaki güncel fiyat farklı olduğunda burada listelenir. '
-          'Son 2 günün satışları kontrol edilir — yani "kasa eski/yanlış fiyatla satıyor" uyarısıdır. '
-          'Uygulamadan yapılan fiyat değişiklikleri kasaya saniyeler içinde gittiği için burada kalıcı görünmez.',
+          'Kasa, kataloğdaki güncel fiyattan farklı bir fiyatla satış yaptığında (son 2 gün) burada listelenir.',
           style: TextStyle(color: AppColors.brown500, fontSize: 12.5, height: 1.4),
         ),
         const SizedBox(height: 12),
@@ -1600,9 +1592,6 @@ class _ZReportsSectionState extends State<_ZReportsSection> {
           return ListView(
             padding: EdgeInsets.zero,
             children: [
-              Text('Son ${rows.length} Z raporu. Bir satıra dokunarak rapor metnini görün.',
-                  style: const TextStyle(color: AppColors.brown500, fontSize: 12.5)),
-              const SizedBox(height: 12),
               SortableTable<KasaZReport>(
                 rows: rows,
                 initialSortColumn: 1, // Tarih (z_no can reset, see repo)

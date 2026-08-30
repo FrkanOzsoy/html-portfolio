@@ -87,11 +87,11 @@ class _BulkPriceImportScreenState extends State<BulkPriceImportScreen> {
         final result = gridFromPdfBytes(bytes);
         grid = result.grid;
         if (result.totalRows == 0) {
-          throw Exception('PDF\'de metin bulunamadı -- taranmış/fotoğraf bir PDF ise bu yöntem çalışmaz.');
+          throw Exception('PDF\'de metin yok -- taranmış PDF okunamaz.');
         }
         final dropped = result.totalRows - result.keptRows;
         if (dropped > 0) {
-          dropNote = 'PDF\'deki $dropped satır düzensiz göründüğü için atlandı (toplam ${result.totalRows} satırdan ${result.keptRows} tanesi okundu).';
+          dropNote = '$dropped düzensiz satır atlandı (${result.keptRows}/${result.totalRows} okundu).';
         }
       } else {
         final excel = Excel.decodeBytes(bytes);
@@ -271,7 +271,7 @@ class _BulkPriceImportScreenState extends State<BulkPriceImportScreen> {
                 const Expanded(
                   child: Center(
                     child: Text(
-                      'Tedarikçiden gelen fiyat listesi dosyasını seçin (.xlsx veya .pdf).',
+                      'Tedarikçi fiyat listesini seçin (.xlsx veya .pdf).',
                       style: TextStyle(color: AppColors.brown400),
                       textAlign: TextAlign.center,
                     ),
@@ -399,13 +399,13 @@ class _BulkPriceImportScreenState extends State<BulkPriceImportScreen> {
         'Bulunmayan $missingCount ürünü de yeni ürün olarak oluştur',
         style: const TextStyle(fontWeight: FontWeight.w600, color: AppColors.brown800, fontSize: 13),
       ),
-      subtitle: const Text('Adı ve fiyatı dosyada olmayan satırlar otomatik atlanır.', style: TextStyle(fontSize: 12)),
+      subtitle: const Text('Adı/fiyatı eksik satırlar atlanır.', style: TextStyle(fontSize: 12)),
     );
   }
 
   Widget _buildReviewTable() {
     if (_reviewRows.isEmpty) {
-      return const Center(child: Text('Satır bulunamadı -- barkod sütununu kontrol edin.', style: TextStyle(color: AppColors.brown500)));
+      return const Center(child: Text('Satır yok -- barkod sütununu kontrol edin.', style: TextStyle(color: AppColors.brown500)));
     }
     return Container(
       decoration: BoxDecoration(border: Border.all(color: AppColors.creamBorder), borderRadius: BorderRadius.circular(AppRadius.box)),

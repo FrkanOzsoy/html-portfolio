@@ -214,16 +214,7 @@ class _NewListSheetState extends State<_NewListSheet> {
                 alignment: Alignment.centerLeft,
                 child: Text('Ürünlerde Gösterilecek Bilgiler', style: TextStyle(fontWeight: FontWeight.w600)),
               ),
-              const Align(
-                alignment: Alignment.centerLeft,
-                child: Padding(
-                  padding: EdgeInsets.only(top: 2, bottom: 4),
-                  child: Text(
-                    'Bu listedeki her üründe hangi bilgiler görünsün. Sonradan da değiştirebilirsiniz.',
-                    style: TextStyle(fontSize: 12, color: AppColors.brown500),
-                  ),
-                ),
-              ),
+              const SizedBox(height: 4),
               for (final key in standardListFieldKeys)
                 CheckboxListTile(
                   value: _selectedFields.contains(key),

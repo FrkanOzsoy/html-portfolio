@@ -535,7 +535,7 @@ class _SearchScreenState extends State<SearchScreen> {
                       textInputAction: TextInputAction.search,
                       onSubmitted: _handleSubmit,
                       decoration: const InputDecoration(
-                        hintText: 'Barkod veya ürün adı yazın (örn: pınar, PINAR, 8690...)',
+                        hintText: 'Barkod veya ürün adı',
                         prefixIcon: Icon(Icons.search),
                       ),
                     ),

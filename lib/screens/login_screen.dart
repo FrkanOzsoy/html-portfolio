@@ -116,7 +116,7 @@ class _LoginScreenState extends State<LoginScreen> {
         content: TextField(
           controller: controller,
           autofocus: true,
-          decoration: const InputDecoration(hintText: 'Örn: Ahmet'),
+          decoration: const InputDecoration(),
           onSubmitted: (v) {
             if (v.trim().isNotEmpty) Navigator.of(context).pop(v.trim());
           },

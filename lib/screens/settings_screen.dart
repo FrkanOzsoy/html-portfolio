@@ -223,8 +223,7 @@ class _DensitySetting extends StatelessWidget {
     final compact = appSettings.compact;
     return _SettingCard(
       title: 'Yoğunluk',
-      subtitle: 'Liste ve tablolarda satırların ne kadar sıkışık görüneceği. '
-          '"Sıkışık" daha çok ürünü aynı anda gösterir.',
+      subtitle: 'Liste ve tablolarda satır sıklığı.',
       control: _ChoiceChips<AppDensity>(
         options: const [
           (value: AppDensity.comfortable, label: 'Rahat'),
@@ -268,7 +267,7 @@ class _TextScaleSetting extends StatelessWidget {
   Widget _buildCard() {
     return _SettingCard(
       title: 'Yazı Boyutu',
-      subtitle: 'Uygulamadaki tüm yazıların büyüklüğü. Kasadan uzaktan bakılıyorsa büyütün.',
+      subtitle: 'Uygulamadaki tüm yazıların büyüklüğü.',
       control: _ChoiceChips<double>(
         options: [
           for (final o in AppSettingsController.textScaleOptions) (value: o.value, label: o.label),
@@ -316,8 +315,7 @@ class _DefaultTabSetting extends StatelessWidget {
     final current = appSettings.defaultTabId;
     return _SettingCard(
       title: 'Açılış Sekmesi',
-      subtitle: 'Uygulama açıldığında hangi sekmenin görüneceği. '
-          'Bir sonraki açılışta geçerli olur.',
+      subtitle: 'Bir sonraki açılışta geçerli olur.',
       control: DropdownButtonFormField<int>(
         initialValue: _tabs.any((t) => t.id == current) ? current : 1,
         isExpanded: true,
