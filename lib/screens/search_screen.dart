@@ -12,6 +12,7 @@ import '../widgets/add_to_list_button.dart';
 import '../widgets/edit_product_button.dart';
 import '../widgets/print_label_button.dart';
 import '../widgets/square_icon_button.dart';
+import '../widgets/table_pager.dart';
 import 'product_create_screen.dart';
 import 'product_edit_screen.dart';
 
@@ -210,6 +211,22 @@ class _SearchScreenState extends State<SearchScreen> {
   _SortField? _sortField;
   bool _sortAscending = true;
 
+  // Pagination -- only bites once a result set passes the page size
+  // (appSettings.tablePageSize, persisted). Selection is by barcode so it
+  // survives paging; _focusedIndex is an index into the *current page*.
+  int _pageIndex = 0;
+
+  int get _pageSize => appSettings.tablePageSize;
+
+  /// The slice of [_sortedResults] shown on the current page.
+  List<Product> get _pagedResults {
+    final all = _sortedResults;
+    if (all.length <= _pageSize) return all;
+    final start = (_pageIndex * _pageSize).clamp(0, all.length);
+    final end = (start + _pageSize).clamp(0, all.length);
+    return all.sublist(start, end);
+  }
+
   @override
   void dispose() {
     _controller.dispose();
@@ -256,7 +273,9 @@ class _SearchScreenState extends State<SearchScreen> {
         _sortField = field;
         _sortAscending = true;
       }
+      _pageIndex = 0; // re-sorting jumps back to page 1
     });
+    if (_tableScrollController.hasClients) _tableScrollController.jumpTo(0);
   }
 
   Future<void> _showSortSheet() => showModalBottomSheet<void>(
@@ -299,12 +318,16 @@ class _SearchScreenState extends State<SearchScreen> {
     setState(() {
       _results = results;
       _focusedIndex = null;
+      _pageIndex = 0;
     });
     final changed = await _showQuickEditDialog(context, results.first);
     if (!mounted) return;
     if (changed == true) {
       _controller.clear();
-      setState(() => _results = []);
+      setState(() {
+        _results = [];
+        _pageIndex = 0;
+      });
     }
     _searchFocusNode.requestFocus();
   }
@@ -321,6 +344,7 @@ class _SearchScreenState extends State<SearchScreen> {
         _results = [];
         _loading = false;
         _focusedIndex = null;
+        _pageIndex = 0;
       });
       return;
     }
@@ -337,6 +361,7 @@ class _SearchScreenState extends State<SearchScreen> {
           // Focus the top row straight away so the bottom-bar actions work
           // on it without ticking a checkbox first (see _actionTargets).
           _focusedIndex = results.isEmpty ? null : 0;
+          _pageIndex = 0;
         });
         if (_tableScrollController.hasClients) _tableScrollController.jumpTo(0);
       });
@@ -346,7 +371,13 @@ class _SearchScreenState extends State<SearchScreen> {
     _debounce = Timer(const Duration(milliseconds: 250), () async {
       try {
         final results = await _repo.searchProducts(value);
-        if (mounted) setState(() { _results = results; _focusedIndex = null; });
+        if (mounted) {
+          setState(() {
+            _results = results;
+            _focusedIndex = null;
+            _pageIndex = 0;
+          });
+        }
       } finally {
         if (mounted) setState(() => _loading = false);
       }
@@ -395,7 +426,7 @@ class _SearchScreenState extends State<SearchScreen> {
   }
 
   KeyEventResult _handleTableKey(KeyEvent event) {
-    final rows = _sortedResults;
+    final rows = _pagedResults; // arrow-keys move within the visible page
     if (event is! KeyDownEvent || rows.isEmpty) return KeyEventResult.ignored;
     switch (event.logicalKey) {
       case LogicalKeyboardKey.arrowDown:
@@ -422,7 +453,7 @@ class _SearchScreenState extends State<SearchScreen> {
   /// product and act on it without ticking it first.
   List<String> _actionTargets() {
     if (_selectedBarcodes.isNotEmpty) return _selectedBarcodes.toList();
-    final rows = _sortedResults;
+    final rows = _pagedResults;
     final i = _focusedIndex;
     if (i != null && i >= 0 && i < rows.length) return [rows[i].barcode];
     return const [];
@@ -431,14 +462,15 @@ class _SearchScreenState extends State<SearchScreen> {
   /// "Düzenle" edits exactly one product -- the single ticked row, or (with
   /// nothing ticked) the focused row. Ambiguous with a multi-selection.
   Product? _editTarget() {
-    final rows = _sortedResults;
     if (_selectedBarcodes.length == 1) {
-      for (final p in rows) {
+      // The ticked row can be on another page -- scan the whole result set.
+      for (final p in _results) {
         if (p.barcode == _selectedBarcodes.first) return p;
       }
       return null;
     }
     if (_selectedBarcodes.isEmpty) {
+      final rows = _pagedResults;
       final i = _focusedIndex;
       if (i != null && i >= 0 && i < rows.length) return rows[i];
     }
@@ -609,10 +641,20 @@ class _SearchScreenState extends State<SearchScreen> {
                             )
                           : desktop
                               ? _buildDesktopTable()
-                              : ListView.separated(
-                                  itemCount: _sortedResults.length,
-                                  separatorBuilder: (_, _) => const SizedBox(height: 8),
-                                  itemBuilder: (context, i) => _ResultCard(product: _sortedResults[i]),
+                              : Column(
+                                  children: [
+                                    if (_sortedResults.length > _pageSize) ...[
+                                      _pagerBar(),
+                                      const SizedBox(height: 8),
+                                    ],
+                                    Expanded(
+                                      child: ListView.separated(
+                                        itemCount: _pagedResults.length,
+                                        separatorBuilder: (_, _) => const SizedBox(height: 8),
+                                        itemBuilder: (context, i) => _ResultCard(product: _pagedResults[i]),
+                                      ),
+                                    ),
+                                  ],
                                 ),
             ),
             if (desktop && _controller.text.trim().isNotEmpty && _results.isNotEmpty) _buildDesktopBottomBar(),
@@ -648,48 +690,84 @@ class _SearchScreenState extends State<SearchScreen> {
     );
   }
 
+  /// Pager bar shared by the desktop table and the mobile card list. The
+  /// caller only mounts it once [_sortedResults] is bigger than one page.
+  Widget _pagerBar() {
+    return TablePager(
+      totalItems: _sortedResults.length,
+      pageIndex: _pageIndex,
+      pageSize: _pageSize,
+      onPageChanged: (p) {
+        setState(() {
+          _pageIndex = p;
+          _focusedIndex = 0; // land on the top row of the new page
+        });
+        if (_tableScrollController.hasClients) _tableScrollController.jumpTo(0);
+      },
+      onPageSizeChanged: (_) {
+        setState(() {
+          _pageIndex = 0;
+          _focusedIndex = _results.isEmpty ? null : 0;
+        });
+        if (_tableScrollController.hasClients) _tableScrollController.jumpTo(0);
+      },
+    );
+  }
+
   Widget _buildDesktopTable() {
     return Focus(
       focusNode: _tableFocusNode,
       onKeyEvent: (node, event) => _handleTableKey(event),
-      child: Container(
-        decoration: BoxDecoration(
-          border: Border.all(color: AppColors.creamBorder),
-          borderRadius: BorderRadius.circular(AppRadius.box),
-        ),
-        clipBehavior: Clip.antiAlias,
-        child: Column(
+      child: ListenableBuilder(
+        listenable: appSettings,
+        builder: (context, _) => Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            Container(
-              color: AppColors.brown100,
-              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-              child: Row(
-                children: [
-                  const SizedBox(width: 32),
-                  Expanded(flex: 3, child: _sortHeaderCell('Ürün Adı', _SortField.name)),
-                  SizedBox(width: 190, child: _sortHeaderCell('Barkod', _SortField.barcode)),
-                  SizedBox(width: 120, child: _sortHeaderCell('Fiyat', _SortField.price, align: TextAlign.right)),
-                  SizedBox(width: 70, child: _sortHeaderCell('Birim', _SortField.unit, align: TextAlign.center)),
-                  SizedBox(width: 90, child: _sortHeaderCell('KDV', _SortField.kdv, align: TextAlign.center)),
-                ],
-              ),
-            ),
-            // One SelectionArea around the whole body (not per-cell) --
-            // this is what makes a drag actually span multiple rows, like
-            // dragging down a column in Excel, rather than being trapped
-            // inside whichever single cell the drag started in. Row
-            // tap/double-tap (via the InkWell in _buildDesktopRow) still
-            // works alongside it -- SelectionArea only claims drags that
-            // start on rendered text, plain taps still reach the InkWell.
+            if (_sortedResults.length > _pageSize) ...[
+              _pagerBar(),
+              const SizedBox(height: 8),
+            ],
             Expanded(
-              child: SelectionArea(
-                child: ListenableBuilder(
-                  listenable: appSettings,
-                  builder: (context, _) => ListView.builder(
-                    controller: _tableScrollController,
-                    itemCount: _sortedResults.length,
-                    itemBuilder: (context, i) => _buildDesktopRow(i),
-                  ),
+              child: Container(
+                decoration: BoxDecoration(
+                  border: Border.all(color: AppColors.creamBorder),
+                  borderRadius: BorderRadius.circular(AppRadius.box),
+                ),
+                clipBehavior: Clip.antiAlias,
+                child: Column(
+                  children: [
+                    Container(
+                      color: AppColors.brown100,
+                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                      child: Row(
+                        children: [
+                          const SizedBox(width: 32),
+                          Expanded(flex: 3, child: _sortHeaderCell('Ürün Adı', _SortField.name)),
+                          SizedBox(width: 190, child: _sortHeaderCell('Barkod', _SortField.barcode)),
+                          SizedBox(width: 120, child: _sortHeaderCell('Fiyat', _SortField.price, align: TextAlign.right)),
+                          SizedBox(width: 70, child: _sortHeaderCell('Birim', _SortField.unit, align: TextAlign.center)),
+                          SizedBox(width: 90, child: _sortHeaderCell('KDV', _SortField.kdv, align: TextAlign.center)),
+                        ],
+                      ),
+                    ),
+                    // One SelectionArea around the whole body (not per-cell) --
+                    // this is what makes a drag actually span multiple rows,
+                    // like dragging down a column in Excel, rather than being
+                    // trapped inside whichever single cell the drag started
+                    // in. Row tap/double-tap (via the InkWell in
+                    // _buildDesktopRow) still works alongside it --
+                    // SelectionArea only claims drags that start on rendered
+                    // text, plain taps still reach the InkWell.
+                    Expanded(
+                      child: SelectionArea(
+                        child: ListView.builder(
+                          controller: _tableScrollController,
+                          itemCount: _pagedResults.length,
+                          itemBuilder: (context, i) => _buildDesktopRow(i),
+                        ),
+                      ),
+                    ),
+                  ],
                 ),
               ),
             ),
@@ -719,7 +797,7 @@ class _SearchScreenState extends State<SearchScreen> {
   }
 
   Widget _buildDesktopRow(int i) {
-    final product = _sortedResults[i];
+    final product = _pagedResults[i];
     final selected = _selectedBarcodes.contains(product.barcode);
     final focused = i == _focusedIndex;
     return InkWell(

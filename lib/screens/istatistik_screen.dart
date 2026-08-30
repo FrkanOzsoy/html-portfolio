@@ -2,6 +2,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import '../app_settings.dart';
 import '../data_repo.dart';
 import '../format.dart';
 import '../kasa_repo.dart';
@@ -1848,9 +1849,19 @@ class _UrunSatislariSectionState extends State<_UrunSatislariSection> {
 
   @override
   Widget build(BuildContext context) {
-    return ListView(
-      padding: const EdgeInsets.fromLTRB(16, 14, 16, 24),
-      children: [
+    return ListenableBuilder(
+      listenable: appSettings,
+      builder: (context, _) => Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          // Fixed toolbar -- presets + filters stay put; only the table body
+          // below scrolls.
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 14, 16, 12),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
         // 1. Timeline presets row
         Wrap(
           spacing: 6,
@@ -2039,10 +2050,14 @@ class _UrunSatislariSectionState extends State<_UrunSatislariSection> {
             ),
           ],
         ),
-        const SizedBox(height: 12),
+              ],
+            ),
+          ),
 
-        // 3. Table with data
-        FutureBuilder<List<KasaProductSalesReport>>(
+          // Table -- fills the remaining height; its body scrolls, the pager
+          // (when there is more than one page) stays pinned above it.
+          Expanded(
+            child: FutureBuilder<List<KasaProductSalesReport>>(
           future: _future,
           builder: (context, snap) {
             if (!snap.hasData) {
@@ -2064,7 +2079,9 @@ class _UrunSatislariSectionState extends State<_UrunSatislariSection> {
               totalLines += r.lineCount;
             }
 
-            return Column(
+            return Padding(
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+              child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
                 // Summary bar
@@ -2101,8 +2118,10 @@ class _UrunSatislariSectionState extends State<_UrunSatislariSection> {
                 ),
                 const SizedBox(height: 10),
 
-                SortableTable<KasaProductSalesReport>(
+                Expanded(
+                  child: SortableTable<KasaProductSalesReport>(
                   rows: rows,
+                  pageSize: appSettings.tablePageSize,
                   initialSortColumn: 4, // Ciro (revenue) desc
                   initialAscending: false,
                   emptyText: 'Seçili filtrelere uyan ürün kaydı bulunamadı.',
@@ -2208,11 +2227,15 @@ class _UrunSatislariSectionState extends State<_UrunSatislariSection> {
                     ),
                   ],
                 ),
+                ),
               ],
-            );
+            ),
+          );
           },
-        ),
-      ],
+            ),
+          ),
+        ],
+      ),
     );
   }
 }

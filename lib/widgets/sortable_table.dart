@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../theme.dart';
+import 'table_pager.dart';
 
 /// One column of a [SortableTable].
 class SortColumn<T> {
@@ -47,6 +48,12 @@ class SortableTable<T> extends StatefulWidget {
   /// Optional per-row background tint (e.g. flag voided rows).
   final Color? Function(T row)? rowTint;
 
+  /// When non-null, the caller promises a bounded height (an [Expanded]
+  /// parent). The body then scrolls internally, and once there are more than
+  /// [pageSize] rows a sticky [TablePager] appears on top. Leave null for the
+  /// plain "render every row, let the parent scroll" behaviour.
+  final int? pageSize;
+
   const SortableTable({
     super.key,
     required this.rows,
@@ -56,6 +63,7 @@ class SortableTable<T> extends StatefulWidget {
     this.onRowTap,
     this.emptyText = 'Kayıt yok.',
     this.rowTint,
+    this.pageSize,
   });
 
   @override
@@ -65,6 +73,17 @@ class SortableTable<T> extends StatefulWidget {
 class _SortableTableState<T> extends State<SortableTable<T>> {
   late int _sortCol = widget.initialSortColumn;
   late bool _asc = widget.initialAscending;
+  int _pageIndex = 0;
+
+  @override
+  void didUpdateWidget(SortableTable<T> old) {
+    super.didUpdateWidget(old);
+    // A new / re-filtered row set or a smaller page size can leave _pageIndex
+    // past the end -- snap back to page 1.
+    if (old.rows.length != widget.rows.length || old.pageSize != widget.pageSize) {
+      _pageIndex = 0;
+    }
+  }
 
   void _toggle(int col) {
     setState(() {
@@ -74,6 +93,7 @@ class _SortableTableState<T> extends State<SortableTable<T>> {
         _sortCol = col;
         _asc = !widget.columns[col].numeric; // text A→Z, numbers high→low first
       }
+      _pageIndex = 0; // re-sorting from any page lands you back on page 1
     });
   }
 
@@ -103,59 +123,114 @@ class _SortableTableState<T> extends State<SortableTable<T>> {
       );
     }
 
-    final rows = _sorted;
+    final allRows = _sorted;
     final scrollWidth = widget.columns.fold<double>(0, (s, c) => s + c._scrollWidth);
+
+    // Non-null pageSize == the caller gave us a bounded height. Then the body
+    // always scrolls internally; the pager only shows past one page.
+    final ps = widget.pageSize;
 
     return LayoutBuilder(
       builder: (context, c) {
         final fits = c.maxWidth >= scrollWidth || c.maxWidth == double.infinity;
-        final table = Container(
-          width: fits ? null : scrollWidth,
-          decoration: BoxDecoration(
-            border: Border.all(color: AppColors.creamBorder),
-            borderRadius: BorderRadius.circular(AppRadius.box),
-          ),
-          clipBehavior: Clip.antiAlias,
+
+        if (ps == null) {
+          final table = Container(
+            width: fits ? null : scrollWidth,
+            decoration: _boxDecoration(),
+            clipBehavior: Clip.antiAlias,
+            child: Column(
+              children: [
+                _headerBar(fits),
+                for (var r = 0; r < allRows.length; r++) _dataRow(r, allRows[r], fits),
+              ],
+            ),
+          );
+          if (fits) return table;
+          return SingleChildScrollView(scrollDirection: Axis.horizontal, child: table);
+        }
+
+        // --- paged layout: sticky pager (if >1 page) + header, scrolling body ---
+        final showPager = allRows.length > ps;
+        final pageCount = showPager ? (allRows.length + ps - 1) ~/ ps : 1;
+        final page = _pageIndex.clamp(0, pageCount - 1);
+        final start = page * ps;
+        final pageRows = allRows.sublist(start, (start + ps).clamp(0, allRows.length));
+
+        final inner = SizedBox(
+          width: fits ? c.maxWidth : scrollWidth,
           child: Column(
             children: [
-              Container(
-                color: AppColors.brown100,
-                child: Row(children: [
-                  for (var i = 0; i < widget.columns.length; i++) _header(i, fits),
-                ]),
-              ),
-              for (var r = 0; r < rows.length; r++)
-                _RowInk(
-                  onTap: widget.onRowTap == null ? null : () => widget.onRowTap!(rows[r]),
-                  background: widget.rowTint?.call(rows[r]) ??
-                      (r.isEven ? Colors.white : AppColors.creamCard),
-                  child: Row(
-                    crossAxisAlignment: CrossAxisAlignment.center,
-                    children: [
-                      for (final col in widget.columns)
-                        _wrap(
-                          col,
-                          fits,
-                          Align(
-                            alignment: col.numeric ? Alignment.centerRight : Alignment.centerLeft,
-                            child: DefaultTextStyle.merge(
-                              style: const TextStyle(fontSize: 12.5, color: AppColors.brown800),
-                              child: col.cell(rows[r]),
-                            ),
-                          ),
-                        ),
-                    ],
-                  ),
+              _headerBar(fits),
+              Expanded(
+                child: ListView.builder(
+                  itemCount: pageRows.length,
+                  itemBuilder: (context, i) => _dataRow(start + i, pageRows[i], fits),
                 ),
+              ),
             ],
           ),
         );
 
-        if (fits) return table;
-        return SingleChildScrollView(scrollDirection: Axis.horizontal, child: table);
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            if (showPager) ...[
+              TablePager(
+                totalItems: allRows.length,
+                pageIndex: page,
+                pageSize: ps,
+                onPageChanged: (p) => setState(() => _pageIndex = p),
+                onPageSizeChanged: (_) => setState(() => _pageIndex = 0),
+              ),
+              const SizedBox(height: 8),
+            ],
+            Expanded(
+              child: Container(
+                decoration: _boxDecoration(),
+                clipBehavior: Clip.antiAlias,
+                child: fits ? inner : SingleChildScrollView(scrollDirection: Axis.horizontal, child: inner),
+              ),
+            ),
+          ],
+        );
       },
     );
   }
+
+  BoxDecoration _boxDecoration() => BoxDecoration(
+        border: Border.all(color: AppColors.creamBorder),
+        borderRadius: BorderRadius.circular(AppRadius.box),
+      );
+
+  Widget _headerBar(bool fits) => Container(
+        color: AppColors.brown100,
+        child: Row(children: [
+          for (var i = 0; i < widget.columns.length; i++) _header(i, fits),
+        ]),
+      );
+
+  Widget _dataRow(int absoluteIndex, T row, bool fits) => _RowInk(
+        onTap: widget.onRowTap == null ? null : () => widget.onRowTap!(row),
+        background: widget.rowTint?.call(row) ?? (absoluteIndex.isEven ? Colors.white : AppColors.creamCard),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.center,
+          children: [
+            for (final col in widget.columns)
+              _wrap(
+                col,
+                fits,
+                Align(
+                  alignment: col.numeric ? Alignment.centerRight : Alignment.centerLeft,
+                  child: DefaultTextStyle.merge(
+                    style: const TextStyle(fontSize: 12.5, color: AppColors.brown800),
+                    child: col.cell(row),
+                  ),
+                ),
+              ),
+          ],
+        ),
+      );
 
   Widget _wrap(SortColumn<T> col, bool fits, Widget child) {
     final padded = Padding(
