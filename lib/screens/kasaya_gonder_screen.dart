@@ -653,9 +653,10 @@ class _TeraziyeGonderTabState extends State<_TeraziyeGonderTab> {
   ///  1. stages any name/price corrections into Kasaya Gönder (they reach
   ///     Digisoft only once sent from there -- like every other kasa action),
   ///  2. writes the scale file: the till-PC regenerates CASLP16.PLU from
-  ///     Digisoft's *current* rows by reyon name. So after sending the
-  ///     staged changes from Kasaya Gönder, press this again for an
-  ///     up-to-date file.
+  ///     Digisoft's current rows by reyon name, *overlaying* any still-pending
+  ///     (not-yet-sent) price/name/barcode edits from step 1 -- so the .PLU is
+  ///     up to date immediately. The kasa still gets those edits via the normal
+  ///     Kasaya Gönder approve step (till-PC eslSync.ts: fetchPendingOverlays).
   Future<int> _submit() async {
     final list = _selectedList;
     if (list == null) throw StateError('Liste seçilmedi');
