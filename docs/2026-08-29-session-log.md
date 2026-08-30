@@ -652,6 +652,38 @@ Add/remove a name later: `insert into push_notify_names (name) values ('X');` /
 
 ---
 
+## 12e. 2026-08-30 — pagination for the big product tables
+
+Owner: *"with us listing the ürün ara and ürün satışları products, if the current
+query is over 100 products divide them into pages, also put the page selector
+just under here as a constant (stays when scrolled). Also allow the users to
+choose the page size (default 100, remembered across different launches)."*
+
+- **`lib/widgets/table_pager.dart`** — the shared pager bar: page-size dropdown
+  (50 / 100 / 200 / 500), `‹ 1 2 … 7 8 9 … 42 ›`, and `1–100 / N`. Kept
+  *outside* the scrolling body by every caller, so it stays pinned.
+- **`appSettings.tablePageSize`** — new persisted setting (`ui_table_page_size`,
+  default 100). The pager's dropdown writes straight to it.
+- **`SortableTable`** gained an opt-in `pageSize`. When set it takes a bounded
+  height (Expanded parent), scrolls its body with a `ListView.builder`, and
+  shows the pager once there's more than one page. `pageSize == null` keeps the
+  old "render every row, parent scrolls" tree byte-for-byte — so the other five
+  İstatistik tables are untouched. Re-sort / re-filter snaps back to page 1.
+- **Ürün Satışları** (`_UrunSatislariSection`): restructured from one big
+  `ListView` to `Column[ fixed toolbar (presets + filters), Expanded(table) ]`.
+  Toolbar + summary + pager stay put; only rows scroll.
+- **Ürün Ara** (`search_screen.dart`): a `_pagedResults` getter slices
+  `_sortedResults`; it drives the desktop table body, the keyboard nav
+  (arrows move within the page), and the mobile card list. Selection stays keyed
+  by barcode so it survives paging; `_editTarget` scans the full `_results`.
+  `_pageIndex` resets to 0 on every new search and on sort change.
+- Widget tests in `test/table_pager_test.dart` (first tests in the repo):
+  paging slices, chip/arrow navigation, off-page rows unmount, persistence.
+- Shipped as **Shorebird Patch 3 on `1.9.10+2033`** (pure Dart, chevron icons
+  already in the font subset) + Windows rebuild.
+
+---
+
 ## 11. Commits
 
 Trunk‑based, straight to `main` on `github.com/FrkanOzsoy/html-portfolio`.
@@ -682,6 +714,11 @@ Edit a product's barcode
 Bump to 1.9.10+2033
 Düzenle screen: reorder fields, drop helper texts   # + Shorebird Patch 1 on 1.9.10+2033
 Trim verbose UI text across the app                 # + Shorebird Patch 2 on 1.9.10+2033
+Teraziye Gönder: doc — .PLU now overlays pending edits
+db: auto-enable nightly push for allowlisted staff names
+docs: session log — nightly push auto-enable
+Paginate the big product tables (Ürün Ara + Ürün Satışları)  # + Shorebird Patch 3 on 1.9.10+2033
+test: pagination — SortableTable paging + TablePager persistence
 ```
 
 Untracked but on disk (same as the rest of that daemon, historically not in
