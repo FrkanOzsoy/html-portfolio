@@ -427,6 +427,23 @@ class _SearchScreenState extends State<SearchScreen> {
     return const [];
   }
 
+  /// "Düzenle" edits exactly one product -- the single ticked row, or (with
+  /// nothing ticked) the focused row. Ambiguous with a multi-selection.
+  Product? _editTarget() {
+    final rows = _sortedResults;
+    if (_selectedBarcodes.length == 1) {
+      for (final p in rows) {
+        if (p.barcode == _selectedBarcodes.first) return p;
+      }
+      return null;
+    }
+    if (_selectedBarcodes.isEmpty) {
+      final i = _focusedIndex;
+      if (i != null && i >= 0 && i < rows.length) return rows[i];
+    }
+    return null;
+  }
+
   Future<void> _addSelectedToList() async {
     final barcodes = _actionTargets();
     if (barcodes.isEmpty) return;
@@ -784,7 +801,12 @@ class _SearchScreenState extends State<SearchScreen> {
           ),
           const Spacer(),
           SizedBox(
-            width: 180,
+            width: 150,
+            child: EditProductButton(product: _editTarget()),
+          ),
+          const SizedBox(width: 8),
+          SizedBox(
+            width: 160,
             child: OutlinedButton.icon(
               onPressed: canAct ? _printSelected : null,
               style: OutlinedButton.styleFrom(
