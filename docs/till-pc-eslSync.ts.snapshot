@@ -1,0 +1,272 @@
+import fs from "fs";
+import path from "path";
+import { getPool, sql } from "./db";
+import { supabase } from "./supabase";
+
+// Gorev D: esl_export_requests isleme. CAS-LP elektronik raf etiketi
+// (ESL) sistemi icin Digisoft'un TERAZI klasorune yazdigi CASLP16.PLU
+// dosyasini, REYON alanina gore (MANAV/SARKUTERI) TBLSTOKLAR'dan taze
+// uretir. Format, mevcut dosyanin reverse-engineer edilmesiyle cikarildi:
+// sabit genislikte tab-ayrikli satirlar (STOKPLUNO + isim + fiyat +
+// barkod-turevi 5 haneli kod). Dosyayi LP-Works'e yukleyip fiziksel
+// yazicilara (.16 SARKUTERI / .17 MANAV) "Download" ile gonderme adimi
+// KASTEN otomatiklestirilmedi -- bu manuel/insan adimi olarak kalacak
+// (LP-Works'un ozel/manuel IP eklenen cihazlarla cokme sorunu yasandi,
+// bkz. konusma gecmisi).
+
+const PLU_FILE_PATH = "C:\\Digisoft\\Reyoon\\Terazi\\CASLP16.PLU";
+const ENCODING = "windows-1254" as unknown as BufferEncoding; // Node iconv-lite gerektirmez; asagida manuel donusum var.
+
+type ListName = "MANAV" | "SARKUTERI";
+
+interface PendingExportRequest {
+  id: number;
+  list: ListName;
+}
+
+interface StokRow {
+  STOKKODU: string;
+  STOKADI: string;
+  SATISFIYAT1: number | null;
+  BARKOD: string | null;
+  PLUNO: number | null;
+}
+
+async function getPendingExportRequests(): Promise<PendingExportRequest[]> {
+  const { data, error } = await supabase
+    .from("esl_export_requests")
+    .select("id, list")
+    .eq("status", "pending")
+    .order("created_at", { ascending: true })
+    .limit(3);
+
+  if (error) throw new Error(`Bekleyen ESL export istekleri okunamadi: ${error.message}`);
+  return (data ?? []) as PendingExportRequest[];
+}
+
+async function markStatus(
+  id: number,
+  status: "processing" | "done" | "error",
+  itemCount?: number,
+  errorMessage?: string
+): Promise<void> {
+  await supabase
+    .from("esl_export_requests")
+    .update({
+      status,
+      item_count: itemCount ?? null,
+      error_message: errorMessage ?? null,
+      processed_at: status === "processing" ? null : new Date().toISOString(),
+    })
+    .eq("id", id);
+}
+
+async function fetchListRows(list: ListName): Promise<StokRow[]> {
+  const pool = await getPool();
+  const request = pool.request();
+  request.input("reyon", sql.NVarChar(50), list);
+  const result = await request.query(`
+    SELECT s.STOKKODU, s.STOKADI, s.SATISFIYAT1, s.BARKOD, p.PLUNO
+    FROM TBLSTOKLAR s
+    LEFT JOIN TBLSTOKPLUNO p ON p.STOKKODU = s.STOKKODU
+    WHERE s.REYON = @reyon
+      AND s.BARKOD IS NOT NULL AND s.BARKOD <> ''
+      AND s.SATISFIYAT1 IS NOT NULL
+  `);
+  return result.recordset as StokRow[];
+}
+
+interface PendingOverlay {
+  price?: number;
+  name?: string;
+  newBarcode?: string;
+  deleted?: boolean;
+}
+
+// "Teraziye Gonder" butonu fiyat/isim duzeltmelerini Digisoft'a DOGRUDAN
+// yazmaz -- once "Kasaya Gonder"e stage eder (product_pending_changes) ve
+// oraya girildiginde kasaya gider. Export sadece TBLSTOKLAR'a bakarsa
+// kullanicinin az once yazdigi fiyat .PLU'ya yansimaz. Burada henuz kasaya
+// gonderilmemis bekleyen degisiklikleri barkoda gore satirin uzerine
+// bindiriyoruz; boylece terazi dosyasi guncel olur, kasa tarafi ayni
+// degisiklikleri normal onay adiminda alir.
+async function fetchPendingOverlays(): Promise<Map<string, PendingOverlay>> {
+  const { data, error } = await supabase
+    .from("product_pending_changes")
+    .select("barcode, field, new_value");
+  if (error) throw new Error(`Bekleyen degisiklikler okunamadi: ${error.message}`);
+
+  const map = new Map<string, PendingOverlay>();
+  for (const c of (data ?? []) as { barcode: string; field: string; new_value: string }[]) {
+    const cur = map.get(c.barcode) ?? {};
+    switch (c.field) {
+      case "price": {
+        const n = Number(String(c.new_value).replace(",", "."));
+        if (Number.isFinite(n) && n > 0) cur.price = n;
+        break;
+      }
+      case "stockname":
+        if (c.new_value && c.new_value.trim()) cur.name = c.new_value.trim();
+        break;
+      case "barcode":
+        if (/^\d{6,13}$/.test(c.new_value ?? "")) cur.newBarcode = c.new_value;
+        break;
+      case "__delete__":
+        cur.deleted = true;
+        break;
+    }
+    map.set(c.barcode, cur);
+  }
+  return map;
+}
+
+function applyOverlays(
+  rows: StokRow[],
+  overlays: Map<string, PendingOverlay>
+): { rows: StokRow[]; applied: string[] } {
+  if (overlays.size === 0) return { rows, applied: [] };
+  const applied: string[] = [];
+  const out: StokRow[] = [];
+  for (const r of rows) {
+    const o = r.BARKOD ? overlays.get(r.BARKOD) : undefined;
+    if (!o) {
+      out.push(r);
+      continue;
+    }
+    if (o.deleted) {
+      applied.push(`${r.BARKOD} (silinecek -> haric)`);
+      continue;
+    }
+    out.push({
+      ...r,
+      STOKADI: o.name ?? r.STOKADI,
+      SATISFIYAT1: o.price ?? r.SATISFIYAT1,
+      BARKOD: o.newBarcode ?? r.BARKOD,
+    });
+    const bits: string[] = [];
+    if (o.price != null) bits.push(`fiyat=${o.price}`);
+    if (o.name != null) bits.push(`isim=${o.name}`);
+    if (o.newBarcode != null) bits.push(`barkod=${o.newBarcode}`);
+    applied.push(`${r.BARKOD} (${bits.join(", ")})`);
+  }
+  return { rows: out, applied };
+}
+
+// PLUNO=0, Digisoft'ta "hic atanmamis / varsayilan" anlamina geliyor
+// (birden fazla urun ayni STOKKODU'suz-PLUNO=0 satiriyla gelebiliyor) --
+// NULL ile ayni sekilde "atama gerekiyor" olarak ele aliniyor. Ayni PLU
+// numarasiyla iki urun gonderilirse fiziksel etikette carpisma olur.
+async function assignPluNumbers(rows: StokRow[]): Promise<void> {
+  const needsNew = rows.filter((r) => r.PLUNO === null);
+  const needsFix = rows.filter((r) => r.PLUNO !== null && r.PLUNO <= 0);
+  if (needsNew.length === 0 && needsFix.length === 0) return;
+
+  const pool = await getPool();
+  const maxResult = await pool.request().query(`SELECT ISNULL(MAX(PLUNO), 0) AS maxPluno FROM TBLSTOKPLUNO`);
+  let nextPluno = (maxResult.recordset[0].maxPluno as number) + 1;
+
+  for (const row of needsNew) {
+    const insertRequest = pool.request();
+    insertRequest.input("stokKodu", sql.NVarChar(50), row.STOKKODU);
+    insertRequest.input("pluno", sql.Int, nextPluno);
+    await insertRequest.query(
+      `INSERT INTO TBLSTOKPLUNO (STOKKODU, PLUNO) VALUES (@stokKodu, @pluno)`
+    );
+    row.PLUNO = nextPluno;
+    nextPluno++;
+  }
+
+  for (const row of needsFix) {
+    const updateRequest = pool.request();
+    updateRequest.input("stokKodu", sql.NVarChar(50), row.STOKKODU);
+    updateRequest.input("pluno", sql.Int, nextPluno);
+    await updateRequest.query(
+      `UPDATE TBLSTOKPLUNO SET PLUNO = @pluno WHERE STOKKODU = @stokKodu`
+    );
+    row.PLUNO = nextPluno;
+    nextPluno++;
+  }
+}
+
+function padRight(s: string, len: number): string {
+  return s.length >= len ? s.slice(0, len) : s.padEnd(len, " ");
+}
+
+function formatRow(row: StokRow): string {
+  const pluNo = String(row.PLUNO ?? 0);
+  const nameField = padRight(row.STOKADI ?? "", 28);
+  const blankField = padRight("", 28);
+
+  const priceKurus = Math.round((row.SATISFIYAT1 ?? 0) * 100);
+  const priceField = padRight("    " + String(priceKurus), 10);
+
+  const barcodeNum = parseInt((row.BARKOD ?? "0").replace(/\D/g, "") || "0", 10);
+  const shortCode = (barcodeNum % 100000).toString().padStart(5, "0");
+  const codeField = padRight(shortCode, 6);
+
+  return [pluNo, nameField, blankField, priceField, "365", "    ", codeField, "  ", "    "].join("\t");
+}
+
+// windows-1254 (Turkce kod sayfasi) - dosyanin orijinal kodlamasi.
+// Node'un Buffer'i bunu native desteklemedigi icin CP1252-uyumlu Latin
+// harfleri dogrudan, Turkce'ye ozgu karakterleri (Ç,Ğ,İ,Ö,Ş,Ü ve kucukleri)
+// manuel eslestiriyoruz.
+const CP1254_MAP: Record<string, number> = {
+  "Ç": 0xC7, "ç": 0xE7, "Ğ": 0xD0, "ğ": 0xF0, "İ": 0xDD, "ı": 0xFD,
+  "Ö": 0xD6, "ö": 0xF6, "Ş": 0xDE, "ş": 0xFE, "Ü": 0xDC, "ü": 0xFC,
+};
+
+function encodeCp1254(text: string): Buffer {
+  const bytes: number[] = [];
+  for (const ch of text) {
+    const mapped = CP1254_MAP[ch];
+    if (mapped !== undefined) {
+      bytes.push(mapped);
+    } else {
+      const code = ch.codePointAt(0)!;
+      bytes.push(code < 256 ? code : 0x3F); // bilinmeyen -> '?'
+    }
+  }
+  return Buffer.from(bytes);
+}
+
+async function writePluFile(rows: StokRow[]): Promise<void> {
+  if (fs.existsSync(PLU_FILE_PATH)) {
+    const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+    fs.copyFileSync(PLU_FILE_PATH, `${PLU_FILE_PATH}.bak-${stamp}`);
+  }
+
+  const sorted = [...rows].sort((a, b) => (a.PLUNO ?? 0) - (b.PLUNO ?? 0));
+  const lines = sorted.map(formatRow);
+  const text = lines.join("\r\n") + "\r\n";
+
+  fs.writeFileSync(PLU_FILE_PATH, encodeCp1254(text));
+}
+
+export async function processPendingExportRequests(): Promise<void> {
+  const pending = await getPendingExportRequests();
+
+  for (const req of pending) {
+    await markStatus(req.id, "processing");
+    try {
+      const rows = await fetchListRows(req.list);
+      await assignPluNumbers(rows);
+
+      const overlays = await fetchPendingOverlays();
+      const { rows: finalRows, applied } = applyOverlays(rows, overlays);
+      await writePluFile(finalRows);
+
+      await markStatus(req.id, "done", finalRows.length);
+      console.log(
+        new Date().toISOString(),
+        `ESL export tamamlandi: liste=${req.list} urunSayisi=${finalRows.length}` +
+          (applied.length ? ` (bekleyen degisiklik: ${applied.join("; ")})` : "") +
+          ` -> ${PLU_FILE_PATH}`
+      );
+    } catch (err) {
+      const message = (err as Error).message;
+      await markStatus(req.id, "error", undefined, message);
+      console.error(new Date().toISOString(), `ESL export istegi ${req.id} basarisiz:`, message);
+    }
+  }
+}

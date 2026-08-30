@@ -598,6 +598,33 @@ picked. Shipped as **Shorebird Patch 2 on `1.9.10+2033`** + Windows rebuild:
 
 ---
 
+## 12c. 2026-08-30 (later still) — Teraziye Gönder didn't reflect a just-typed price
+
+Owner: pressed "Teraziye Gönder" for SARKUTERI after editing PLU1's price; the
+change landed in Kasaya Gönder fine, but `CASLP16.PLU` still had the old price.
+
+**Cause.** After the kasa-routing rework, "Teraziye Gönder" only *stages* the
+price edit into `product_pending_changes`; it reaches Digisoft only when sent
+from Kasaya Gönder. But `eslSync.ts` regenerates `CASLP16.PLU` purely from
+`TBLSTOKLAR.SATISFIYAT1`, so until the staged change is approved the file shows
+the old price. Confirmed live: barcode `2701014` = STOKKODU `006045`
+"EZINE LUX PEYNIR", SARKUTERI, PLU 1 — Digisoft `SATISFIYAT1` = 333.33, staged
+`product_pending_changes` row = 700; `.PLU` line 1 = `...33333...`.
+
+**Fix (daemon `C:\Digisoft\SupabaseSync\src\eslSync.ts`, recompiled, not tracked).**
+New `fetchPendingOverlays()` reads `product_pending_changes` and
+`applyOverlays()` merges `price` / `stockname` / `barcode` onto the `StokRow`s
+by barcode (and drops `__delete__` items) right before `writePluFile`. The scale
+file is now current the moment you press the button; the kasa still gets the
+same edits through the normal Kasaya Gönder approve step. The daemon log prints
+`(bekleyen degisiklik: 2701014 (fiyat=700))`. Dry-run verified the merge
+(70000 kuruş). App side: comment-only update in `kasaya_gonder_screen.dart`.
+
+**Needs `Restart-Service DigisoftSupabaseSync` (elevated)** to take effect, then
+press Teraziye Gönder again (or a fresh `esl_export_requests` row).
+
+---
+
 ## 11. Commits
 
 Trunk‑based, straight to `main` on `github.com/FrkanOzsoy/html-portfolio`.
