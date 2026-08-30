@@ -585,12 +585,16 @@ barcode? why tf do you use so many texts? Make it from top to bottom 'Ürün Ad�
   No APK re‑upload / `app_releases` change (same release version).
 - Windows rebuilt + `robocopy … C:\src\CCM-Barkod-YENI /MIR`.
 
-Also compiled an app‑wide list of verbose / explanatory UI strings for the owner
-to pick from (helper lines in İstatistik, Ayarlar card subtitles, input hints,
-Kasaya Gönder explainers, bulk‑price‑import instructions). One is now **stale**:
-`kasaya_gonder_screen.dart:738` *"Barkod değişiklikleri şimdilik yalnızca teraziye
-gidiyor…"* — as of 1.9.10 barcode changes do go to the kasa. Pending the owner's
-selection before deleting any.
+Also compiled an app‑wide list of verbose / explanatory UI strings; the owner
+picked. Shipped as **Shorebird Patch 2 on `1.9.10+2033`** + Windows rebuild:
+
+- **Deleted:** "En Çok Satan" sort hint, "Z raporu" tap hint, İstatistik‑PIN
+  sub‑line, "Açılış Sekmesi" redundant sub‑line, login name‑field hint, and the
+  now‑false `kasaya_gonder_screen.dart` note *"Barkod değişiklikleri şimdilik
+  yalnızca teraziye gidiyor…"* (barcode→kasa works as of 1.9.10).
+- **Trimmed to one line:** fiyat‑uyuşmazlığı explainer, Yoğunluk / Yazı Boyutu
+  setting subtitles, Ürün Ara search hint, Kasaya Gönder empty state + "Eski
+  Gönderilenler" explainer, list‑fields explainer, bulk‑price‑import messages.
 
 ---
 
@@ -623,6 +627,7 @@ Bump to 1.9.9+2032
 Edit a product's barcode
 Bump to 1.9.10+2033
 Düzenle screen: reorder fields, drop helper texts   # + Shorebird Patch 1 on 1.9.10+2033
+Trim verbose UI text across the app                 # + Shorebird Patch 2 on 1.9.10+2033
 ```
 
 Untracked but on disk (same as the rest of that daemon, historically not in
