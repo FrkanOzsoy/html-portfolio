@@ -568,6 +568,32 @@ Kasaya Gönder like every other edit.
 
 ---
 
+## 12b. 2026-08-30 (later) — Düzenle screen cleanup + Patch 1
+
+Owner: *"the editing screen is weird. Why did you put a warning line on the
+barcode? why tf do you use so many texts? Make it from top to bottom 'Ürün Adı'
+'Barkod' 'Fiyat' and 'Kdv'."*
+
+- `lib/screens/product_edit_screen.dart` — fields reordered top‑to‑bottom to
+  **Ürün Adı → Barkod → Fiyat (₺) → KDV**. Removed the barcode `helperText`
+  (*"Değiştirirseniz eski barkod bu üründen kaldırılır."*) and the
+  *"Mevcut KDV: %.."* caption (the KDV dropdown already shows the current value).
+- Shipped as **Shorebird Patch 1 on `1.9.10+2033`** (pure Dart, no new icons).
+  The patch tripped the asset‑diff guard on `NativeAssetsManifest.json` only
+  (build metadata, not read at runtime) → re‑run with `--allow-asset-diffs`.
+  Published + promoted to stable. Phones on 1.9.10 pick it up on next launch.
+  No APK re‑upload / `app_releases` change (same release version).
+- Windows rebuilt + `robocopy … C:\src\CCM-Barkod-YENI /MIR`.
+
+Also compiled an app‑wide list of verbose / explanatory UI strings for the owner
+to pick from (helper lines in İstatistik, Ayarlar card subtitles, input hints,
+Kasaya Gönder explainers, bulk‑price‑import instructions). One is now **stale**:
+`kasaya_gonder_screen.dart:738` *"Barkod değişiklikleri şimdilik yalnızca teraziye
+gidiyor…"* — as of 1.9.10 barcode changes do go to the kasa. Pending the owner's
+selection before deleting any.
+
+---
+
 ## 11. Commits
 
 Trunk‑based, straight to `main` on `github.com/FrkanOzsoy/html-portfolio`.
@@ -596,6 +622,7 @@ Bump to 1.9.9+2032
 Ürün Ara (desktop): double-click opens the full editor
 Edit a product's barcode
 Bump to 1.9.10+2033
+Düzenle screen: reorder fields, drop helper texts   # + Shorebird Patch 1 on 1.9.10+2033
 ```
 
 Untracked but on disk (same as the rest of that daemon, historically not in
