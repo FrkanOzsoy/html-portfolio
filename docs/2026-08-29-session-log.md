@@ -526,7 +526,45 @@ service_role key is never needed in plaintext; the cron uses its own
 | 1.9.4+27 | 2027 | last `--split-per-abi` release (pre‑session) |
 | 1.9.5+2028 | 2028 | first Shorebird universal APK |
 | 1.9.6+2029 | 2029 | FCM (never distributed) |
-| **1.9.7+2030** | **2030** | FCM + push‑token fix — **current**; patched with mobile İstatistik + profile picker |
+| 1.9.7+2030 | 2030 | FCM + push‑token fix (never distributed — patch rejected, see below) |
+| 1.9.8+2031 | 2031 | + mobile İstatistik (PIN 159951) + profile‑picker login + horizontal‑scroll tables |
+| 1.9.9+2032 | 2032 | + Ürün Satışları explorer (replaced Ölü Stok, from the other PC) + desktop "Düzenle" button in Ürün Ara + double‑click‑opens‑full‑editor |
+| **1.9.10+2033** | **2033** | + edit a product's barcode |
+
+The 1.9.7 → 1.9.8 jump: the mobile‑İstatistik change was meant to be a
+`shorebird patch`, but it added new Material icons (`Icons.insights`,
+`Icons.lock_outline`) which change the tree‑shaken `MaterialIcons-Regular.otf`
+subset — Shorebird patches don't carry asset changes, so it had to be a full
+release. Same thing bit the Ürün Satışları explorer (`Icons.date_range` etc.).
+**Rule of thumb: a Dart change that introduces a new icon needs a full release.**
+Also: **never run `flutter build windows` and `shorebird release android`
+concurrently** — they raced on the Flutter engine cache and the AAB build failed
+with `Could not find io.flutter:arm64_v8a_release:…`. Re‑running alone worked.
+
+---
+
+## 10. Editing a product's barcode (2026-08-30)
+
+`ProductEditScreen` (the full "Düzenle" screen, reachable from the new
+Ürün Ara bottom‑bar button or a double‑click) now has an editable **Barkod**
+field. Changing it stages a `'barcode'` pending change (old → new) through
+Kasaya Gönder like every other edit.
+
+- `db/2026-08-30_barcode_edit.sql` — `'barcode'` added to both
+  `product_pending_changes_field_check` and
+  `product_field_update_requests_field_check` (applied).
+- `DataRepo.sendPendingChange` — for `field == 'barcode'` inserts a
+  `product_field_update_requests` row (barcode = OLD, new_value = NEW); on
+  `done` drops the OLD row from the local sqlite cache and pulls the NEW one.
+- Daemon `fieldSync.ts` — a `"barcode"` branch: verifies the new barcode isn't
+  already assigned to a different `STOKKODU`, updates `TBLSTOK_BARKODLAR` and
+  `TBLSTOKLAR.BARKOD`, inserts `TBLFIYAT_DEGISIMLERI`, pushes the updated
+  barcode list to the register, then cleans up Supabase
+  (`list_items.barcode` migrated, stale `products` + `product_pending_changes`
+  for the OLD barcode deleted).
+- Validation in the app: 6–13 digits, rejected if `lookupBarcode` finds it
+  already in use.
+- **Needs a daemon service restart** to pick up the new fieldSync branch.
 
 ---
 
@@ -550,6 +588,14 @@ push_service: split init() from syncToken()
 Bump to 1.9.7+2030
 İstatistik on mobile (PIN-gated) + profile picker at login
 docs: daily-summary-push progress
+docs: full session log for 2026-08-29
+Bump to 1.9.8+2031 (mobile İstatistik needs a full release)
+(other PC) İstatistik: replace Ölü Stok with full Ürün Satışları explorer + docs
+Ürün Ara (desktop): add a "Düzenle" button to the bottom bar
+Bump to 1.9.9+2032
+Ürün Ara (desktop): double-click opens the full editor
+Edit a product's barcode
+Bump to 1.9.10+2033
 ```
 
 Untracked but on disk (same as the rest of that daemon, historically not in
