@@ -625,6 +625,33 @@ press Teraziye Gönder again (or a fresh `esl_export_requests` row).
 
 ---
 
+## 12d. 2026-08-30 — nightly push: keep it on, auto-enroll Ahmet's phone
+
+The test push already works on device `f9G3pQImS5SB…` (staff Furkan, `enabled`),
+and the cron (`30 20 * * *`, 23:30 TR) is active — so that device gets the
+summary nightly with no further action.
+
+Two gaps closed with `db/2026-08-30_push_auto_enable.sql`:
+
+- **A new phone logging in as Ahmet** would register with `enabled=false` and
+  need the owner to open Ayarlar → Bildirimler. Now: table `push_notify_names`
+  ({'Furkan','Ahmet'}) + a **BEFORE INSERT** trigger on `push_devices` sets
+  `enabled=true` when the registering device's `staff_name` is in that table.
+- **FCM token refresh** on the current device would create a fresh
+  `enabled=false` row (silent failure). Same trigger re-enables it (staff_name
+  Furkan); the dead token is pruned by the edge function's UNREGISTERED handling
+  on the next send.
+
+INSERT-only, so it never fights the owner: turning a device off in Ayarlar is an
+`ON CONFLICT DO UPDATE` path that doesn't fire the trigger. Verified with test
+rows: Ahmet → auto-enabled, Zeynep (not listed) → stays off, owner-disabled →
+stays off on re-register. Deleted a stale disabled Furkan token row while there.
+
+Add/remove a name later: `insert into push_notify_names (name) values ('X');` /
+`delete from push_notify_names where name='X';`.
+
+---
+
 ## 11. Commits
 
 Trunk‑based, straight to `main` on `github.com/FrkanOzsoy/html-portfolio`.
