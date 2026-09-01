@@ -264,32 +264,57 @@ class KasaRepo {
     return (rows as List).map((r) => KasaReceipt.fromJson(r as Map<String, dynamic>)).toList();
   }
 
+  /// Exact, unlimited receipt-level aggregates for [barcodes] over a date
+  /// range -- Fiş/Nakit/Kart/İndirim/İptal for Kasap/Manav's Özet tab and
+  /// the header line on their Son İşlemler/İptaller tabs. Deliberately not
+  /// derived from getReceiptsForBarcodes's (capped) row list -- this is a
+  /// dedicated server-side aggregate so it's never silently truncated.
+  Future<ScopedReceiptsSummary> getReceiptsSummaryForBarcodes({
+    required List<String> barcodes,
+    DateTime? from,
+    DateTime? to,
+  }) async {
+    if (barcodes.isEmpty) return ScopedReceiptsSummary.empty;
+    final rows = await _client.rpc('kasa_receipts_summary_for_barcodes', params: {
+      'p_barcodes': barcodes,
+      'p_from': from?.toUtc().toIso8601String(),
+      'p_to': to?.toUtc().toIso8601String(),
+    }).timeout(const Duration(seconds: 15));
+    return ScopedReceiptsSummary.fromJson((rows as List).first as Map<String, dynamic>);
+  }
+
+  /// Hourly revenue for [barcodes] on a single local day -- zero-filled to
+  /// 24 slots so it drops straight into the same _HourlyBars widget the
+  /// real (unscoped) Günlük Özet uses.
+  Future<List<num>> getHourlySalesForBarcodes({required List<String> barcodes, required DateTime day}) async {
+    final byHour = List<num>.filled(24, 0);
+    if (barcodes.isEmpty) return byHour;
+    final rows = await _client.rpc('kasa_hourly_sales_for_barcodes', params: {
+      'p_barcodes': barcodes,
+      'p_day': _dateOnly(day),
+    }).timeout(const Duration(seconds: 15));
+    for (final r in (rows as List)) {
+      final h = (r['hour'] as num).toInt();
+      if (h >= 0 && h < 24) byHour[h] = (r['revenue'] as num?) ?? 0;
+    }
+    return byHour;
+  }
+
   // ---- Fiyat Uyuşmazlığı -------------------------------------------------
 
   /// Live stream of *open* (unresolved) price mismatches, newest first.
-  /// When [barcodes] is given, only mismatches for those barcodes pass
-  /// through (client-side -- the underlying realtime stream can't easily
-  /// carry an arbitrary IN-filter alongside order/limit).
-  Stream<List<KasaPriceMismatch>> watchOpenMismatches({int limit = 100, Set<String>? barcodes}) {
+  Stream<List<KasaPriceMismatch>> watchOpenMismatches({int limit = 100}) {
     return _client
         .from('kasa_price_mismatches')
         .stream(primaryKey: ['id'])
         .order('sold_at', ascending: false)
         .limit(limit)
-        .map((rows) => rows
-            .map((r) => KasaPriceMismatch.fromJson(r))
-            .where((m) => !m.resolved && (barcodes == null || barcodes.contains(m.barcode)))
-            .toList());
+        .map((rows) => rows.map((r) => KasaPriceMismatch.fromJson(r)).where((m) => !m.resolved).toList());
   }
 
-  Future<List<KasaPriceMismatch>> getMismatches({
-    bool includeResolved = false,
-    int limit = 200,
-    List<String>? barcodes,
-  }) async {
+  Future<List<KasaPriceMismatch>> getMismatches({bool includeResolved = false, int limit = 200}) async {
     var q = _client.from('kasa_price_mismatches').select();
     if (!includeResolved) q = q.eq('resolved', false);
-    if (barcodes != null) q = q.inFilter('barcode', barcodes);
     final rows = await q.order('sold_at', ascending: false).limit(limit).timeout(const Duration(seconds: 10));
     return rows.map((r) => KasaPriceMismatch.fromJson(r)).toList();
   }

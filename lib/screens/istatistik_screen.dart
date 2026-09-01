@@ -1185,7 +1185,8 @@ class _CardBrandBreakdown extends StatelessWidget {
 
 class _HourlyBars extends StatelessWidget {
   final List<num> byHour;
-  const _HourlyBars({required this.byHour});
+  final double height;
+  const _HourlyBars({required this.byHour, this.height = 150});
 
   @override
   Widget build(BuildContext context) {
@@ -1202,8 +1203,9 @@ class _HourlyBars extends StatelessWidget {
     if (maxV == 0) {
       return const Text('Bu gün için satış yok.', style: TextStyle(color: AppColors.brown400, fontSize: 12));
     }
+    final barMax = height - 40;
     return SizedBox(
-      height: 150,
+      height: height,
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.end,
         children: [
@@ -1222,7 +1224,7 @@ class _HourlyBars extends StatelessWidget {
                       ),
                       const SizedBox(height: 2),
                       Container(
-                        height: (110 * (byHour[h] / maxV)).clamp(byHour[h] > 0 ? 3.0 : 0.0, 110.0),
+                        height: (barMax * (byHour[h] / maxV)).clamp(byHour[h] > 0 ? 3.0 : 0.0, barMax),
                         decoration: BoxDecoration(
                           color: AppColors.terracotta.withValues(alpha: 0.85),
                           borderRadius: const BorderRadius.vertical(top: Radius.circular(3)),
@@ -1254,7 +1256,8 @@ class _HourlyBars extends StatelessWidget {
 /// fill, unlike the always-24-slot hourly chart.
 class _DailyBars extends StatelessWidget {
   final List<KasaDailyTrendPoint> points; // assumed sorted ascending by date
-  const _DailyBars({required this.points});
+  final double height;
+  const _DailyBars({required this.points, this.height = 150});
 
   @override
   Widget build(BuildContext context) {
@@ -1262,8 +1265,9 @@ class _DailyBars extends StatelessWidget {
     if (points.isEmpty || maxV == 0) {
       return const Text('Bu dönem için satış yok.', style: TextStyle(color: AppColors.brown400, fontSize: 12));
     }
+    final barMax = height - 40;
     return SizedBox(
-      height: 150,
+      height: height,
       child: SingleChildScrollView(
         scrollDirection: Axis.horizontal,
         child: Row(
@@ -1285,7 +1289,7 @@ class _DailyBars extends StatelessWidget {
                         ),
                         const SizedBox(height: 2),
                         Container(
-                          height: (110 * (p.revenue / maxV)).clamp(p.revenue > 0 ? 3.0 : 0.0, 110.0),
+                          height: (barMax * (p.revenue / maxV)).clamp(p.revenue > 0 ? 3.0 : 0.0, barMax),
                           decoration: BoxDecoration(
                             color: AppColors.terracotta.withValues(alpha: 0.85),
                             borderRadius: const BorderRadius.vertical(top: Radius.circular(3)),
@@ -1408,15 +1412,26 @@ class _ScopedReceiptsSection extends StatefulWidget {
 
 class _ScopedReceiptsSectionState extends State<_ScopedReceiptsSection> {
   int _days = 7;
-  late Future<List<KasaReceipt>> _future = _load();
+  late Future<({List<KasaReceipt> rows, ScopedReceiptsSummary summary})> _future = _load();
 
-  Future<List<KasaReceipt>> _load() => widget.repo.getReceiptsForBarcodes(
-        barcodes: widget.barcodes,
-        from: DateTime.now().subtract(Duration(days: _days)),
-        to: DateTime.now(),
-        voidOnly: widget.voidOnly,
-        limit: 200,
-      );
+  Future<({List<KasaReceipt> rows, ScopedReceiptsSummary summary})> _load() async {
+    final from = DateTime.now().subtract(Duration(days: _days));
+    final to = DateTime.now();
+    // rows: capped display list (a table doesn't need thousands of rows).
+    // summary: exact, unlimited count/total for the header line above it --
+    // deliberately NOT derived from rows.length/summed rows, which would
+    // silently understate on any range with more matching receipts than
+    // the cap.
+    final rows = await widget.repo.getReceiptsForBarcodes(
+      barcodes: widget.barcodes,
+      from: from,
+      to: to,
+      voidOnly: widget.voidOnly,
+      limit: 200,
+    );
+    final summary = await widget.repo.getReceiptsSummaryForBarcodes(barcodes: widget.barcodes, from: from, to: to);
+    return (rows: rows, summary: summary);
+  }
 
   void _setDays(int d) => setState(() {
         _days = d;
@@ -1454,25 +1469,26 @@ class _ScopedReceiptsSectionState extends State<_ScopedReceiptsSection> {
           ],
         ),
         const SizedBox(height: 14),
-        FutureBuilder<List<KasaReceipt>>(
+        FutureBuilder<({List<KasaReceipt> rows, ScopedReceiptsSummary summary})>(
           future: _future,
           builder: (context, snap) {
             if (!snap.hasData) {
               return const Padding(padding: EdgeInsets.symmetric(vertical: 50), child: Center(child: CircularProgressIndicator()));
             }
-            final rows = snap.data!;
+            final rows = snap.data!.rows;
+            final s = snap.data!.summary;
             if (rows.isEmpty) return const _EmptyKasa();
-            num total = 0;
-            for (final r in rows) {
-              total += r.total ?? 0;
-            }
+            final shownCount = widget.voidOnly ? s.iptalSayisi : s.fisSayisi;
+            final shownTotal = widget.voidOnly ? s.iptalDeger : s.toplam;
             return Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
                 Text(
                   widget.voidOnly
-                      ? '${rows.length} iptal fişi  ·  toplam ${formatPrice(total)}'
-                      : '${rows.length} fiş  ·  toplam ${formatPrice(total)}',
+                      ? '$shownCount iptal fişi  ·  toplam ${formatPrice(shownTotal)}'
+                          '${rows.length < shownCount ? ' (son ${rows.length} tanesi listeleniyor)' : ''}'
+                      : '$shownCount fiş  ·  toplam ${formatPrice(shownTotal)}'
+                          '${rows.length < shownCount ? ' (son ${rows.length} tanesi listeleniyor)' : ''}',
                   style: const TextStyle(color: AppColors.brown600, fontSize: 12.5, fontWeight: FontWeight.w600),
                 ),
                 const SizedBox(height: 10),
@@ -1542,11 +1558,13 @@ enum _ScopedRangePreset { today, last7, last30, last90, thisMonth, lastMonth, cu
 /// Kasap/Manav's "Özet" tab -- the scoped equivalent of Günlük Özet, but
 /// date-*range* shaped (like the rest of these sections) rather than
 /// single-day. Ciro/Satılan Ürün come from the exact, line-level scoped
-/// product-sales aggregation; Fiş/Nakit/Kart/İndirim/İptal are inherently
-/// receipt-level and come from kasa_receipts_for_barcodes -- an
-/// approximation on any receipt that also had non-scoped items (the whole
-/// receipt's payment split counts), the same kind of approximation the
-/// real, whole-store Günlük Özet already makes implicitly.
+/// product-sales aggregation; Fiş/Nakit/Kart/İndirim/İptal come from the
+/// exact kasa_receipts_summary_for_barcodes aggregate (never row-capped)
+/// -- an approximation only in the sense that a receipt with both a scoped
+/// item and something else counts its whole payment split, the same kind
+/// of approximation the real, whole-store Günlük Özet already makes
+/// implicitly. The chart is hourly when the selected range is exactly one
+/// day (matching the real Günlük Özet), daily otherwise.
 class _ScopedSummarySection extends StatefulWidget {
   final KasaRepo repo;
   final List<String> barcodes;
@@ -1560,7 +1578,15 @@ class _ScopedSummarySectionState extends State<_ScopedSummarySection> {
   _ScopedRangePreset _preset = _ScopedRangePreset.last30;
   late DateTime _from;
   late DateTime _to;
-  Future<({List<KasaProductSalesReport> sales, List<KasaDailyTrendPoint> trend, List<KasaReceipt> receipts})>? _future;
+  Future<
+      ({
+        List<KasaProductSalesReport> sales,
+        List<KasaDailyTrendPoint>? dailyTrend,
+        List<num>? hourly,
+        ScopedReceiptsSummary receiptsSummary,
+      })>? _future;
+
+  bool get _isSingleDay => DateUtils.isSameDay(_from, _to);
 
   @override
   void initState() {
@@ -1601,15 +1627,28 @@ class _ScopedSummarySectionState extends State<_ScopedSummarySection> {
   Future<
       ({
         List<KasaProductSalesReport> sales,
-        List<KasaDailyTrendPoint> trend,
-        List<KasaReceipt> receipts
+        List<KasaDailyTrendPoint>? dailyTrend,
+        List<num>? hourly,
+        ScopedReceiptsSummary receiptsSummary,
       })> _load() async {
+    // _from/_to are day-precision (local midnight of the first/last day to
+    // include). The receipts RPCs compare against sold_at (a timestamptz)
+    // with an exclusive upper bound, so _to itself (midnight of the last
+    // day) would exclude that entire day -- push the boundary to the start
+    // of the *next* day. Product-sales calls compare DATE columns instead
+    // (inclusive either end regardless of time-of-day), so they use _to
+    // as-is.
+    final receiptsTo = _to.add(const Duration(days: 1));
     final sales = await widget.repo.getProductSalesReport(
         from: _from, to: _to, barcodes: widget.barcodes, includeUnsold: false, limit: 1000);
-    final trend = await widget.repo.getProductSalesDailyTrend(from: _from, to: _to, barcodes: widget.barcodes);
-    final receipts =
-        await widget.repo.getReceiptsForBarcodes(barcodes: widget.barcodes, from: _from, to: _to, limit: 500);
-    return (sales: sales, trend: trend, receipts: receipts);
+    final receiptsSummary =
+        await widget.repo.getReceiptsSummaryForBarcodes(barcodes: widget.barcodes, from: _from, to: receiptsTo);
+    if (_isSingleDay) {
+      final hourly = await widget.repo.getHourlySalesForBarcodes(barcodes: widget.barcodes, day: _from);
+      return (sales: sales, dailyTrend: null, hourly: hourly, receiptsSummary: receiptsSummary);
+    }
+    final dailyTrend = await widget.repo.getProductSalesDailyTrend(from: _from, to: _to, barcodes: widget.barcodes);
+    return (sales: sales, dailyTrend: dailyTrend, hourly: null, receiptsSummary: receiptsSummary);
   }
 
   void _reload() => setState(() {
@@ -1698,76 +1737,58 @@ class _ScopedSummarySectionState extends State<_ScopedSummarySection> {
           ],
         ),
         const SizedBox(height: 14),
-        FutureBuilder<({List<KasaProductSalesReport> sales, List<KasaDailyTrendPoint> trend, List<KasaReceipt> receipts})>(
+        FutureBuilder<
+            ({
+              List<KasaProductSalesReport> sales,
+              List<KasaDailyTrendPoint>? dailyTrend,
+              List<num>? hourly,
+              ScopedReceiptsSummary receiptsSummary,
+            })>(
           future: _future,
           builder: (context, snap) {
             if (!snap.hasData) {
               return const Padding(padding: EdgeInsets.symmetric(vertical: 50), child: Center(child: CircularProgressIndicator()));
             }
             final data = snap.data!;
+            final s = data.receiptsSummary;
             num ciro = 0, satilanUrun = 0;
-            for (final s in data.sales) {
-              ciro += s.revenue;
-              satilanUrun += s.qty;
+            for (final row in data.sales) {
+              ciro += row.revenue;
+              satilanUrun += row.qty;
             }
-            var fisSayisi = 0, iptalSayisi = 0;
-            num nakit = 0, kart = 0, indirim = 0, iptalDeger = 0;
-            final cardByBrand = <String, num>{};
-            for (final r in data.receipts) {
-              if (r.isVoid) {
-                iptalSayisi++;
-                iptalDeger += r.total ?? 0;
-                continue;
-              }
-              fisSayisi++;
-              nakit += r.cashTotal ?? 0;
-              final cardT = r.cardTotal ?? 0;
-              kart += cardT;
-              indirim += r.discountTotal ?? 0;
-              if (cardT > 0) {
-                final brand = r.cardBrand?.trim();
-                final key = (brand == null || brand.isEmpty) ? 'Kart' : brand;
-                cardByBrand[key] = (cardByBrand[key] ?? 0) + cardT;
-              }
-            }
-            if (data.sales.isEmpty && data.receipts.isEmpty) {
+            if (data.sales.isEmpty && s.fisSayisi == 0 && s.iptalSayisi == 0) {
               return const _EmptyKasa();
             }
             return Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
+                Text(_isSingleDay ? 'Saatlik Ciro' : 'Günlük Ciro',
+                    style: const TextStyle(fontWeight: FontWeight.bold, color: AppColors.brown800)),
+                const SizedBox(height: 10),
+                data.hourly != null
+                    ? _HourlyBars(byHour: data.hourly!, height: 260)
+                    : _DailyBars(points: data.dailyTrend!, height: 260),
+                const SizedBox(height: 22),
                 Wrap(
                   spacing: 12,
                   runSpacing: 12,
                   children: [
                     _Metric('Ciro', formatPrice(ciro), big: true, color: AppColors.success),
-                    _Metric('Fiş', '$fisSayisi'),
+                    _Metric('Fiş', '${s.fisSayisi}'),
                     _Metric('Satılan Ürün', _qty(satilanUrun)),
-                    _Metric('Nakit', formatPrice(nakit)),
-                    _Metric('Kart', formatPrice(kart)),
-                    _Metric('İndirim', formatPrice(indirim), color: indirim > 0 ? AppColors.mustard : null),
-                    _Metric('İptal', '$iptalSayisi  (${formatPrice(iptalDeger)})',
-                        color: iptalSayisi > 0 ? AppColors.terracotta : null),
+                    _Metric('Nakit', formatPrice(s.nakit)),
+                    _Metric('Kart', formatPrice(s.kart)),
+                    _Metric('İndirim', formatPrice(s.indirim), color: s.indirim > 0 ? AppColors.mustard : null),
+                    _Metric('İptal', '${s.iptalSayisi}  (${formatPrice(s.iptalDeger)})',
+                        color: s.iptalSayisi > 0 ? AppColors.terracotta : null),
                   ],
                 ),
-                if (cardByBrand.isNotEmpty) ...[
-                  const SizedBox(height: 22),
-                  const Text('Kart Dağılımı', style: TextStyle(fontWeight: FontWeight.bold, color: AppColors.brown800)),
-                  const SizedBox(height: 4),
-                  Text('Toplam kart: ${formatPrice(kart)}', style: const TextStyle(color: AppColors.brown500, fontSize: 12)),
-                  const SizedBox(height: 10),
-                  _CardBrandBreakdown(cardByBrand: cardByBrand, cardTotal: kart),
-                ],
                 const SizedBox(height: 22),
                 const Text('Ürün Dağılımı', style: TextStyle(fontWeight: FontWeight.bold, color: AppColors.brown800)),
                 const SizedBox(height: 4),
                 Text('Toplam ciro: ${formatPrice(ciro)}', style: const TextStyle(color: AppColors.brown500, fontSize: 12)),
                 const SizedBox(height: 10),
                 _ProductRevenueBreakdown(rows: data.sales),
-                const SizedBox(height: 22),
-                const Text('Günlük Ciro', style: TextStyle(fontWeight: FontWeight.bold, color: AppColors.brown800)),
-                const SizedBox(height: 10),
-                _DailyBars(points: data.trend),
               ],
             );
           },
@@ -1779,9 +1800,10 @@ class _ScopedSummarySectionState extends State<_ScopedSummarySection> {
 
 /// Kasap/Manav: a standalone top-level desktop section (and, on mobile,
 /// nested inside İstatistik for Furkan/Ahmet) replicating most of
-/// İstatistik scoped to a barcode set -- Son İşlemler, Özet, İptaller,
-/// Fiyat Uyuşmazlığı, Ürün Satışları. Z Raporları is excluded: it's an
-/// inherently register-wide/day-level document, nothing to scope.
+/// İstatistik scoped to a barcode set -- Özet, Son İşlemler, İptaller,
+/// Ürün Satışları. Fiyat Uyuşmazlığı and Z Raporları are excluded: the
+/// former deliberately dropped as noise for this scoped view, the latter
+/// inherently register-wide/day-level, nothing to scope.
 /// Body-only (no nested Scaffold/AppBar) -- matches TeraziyeGonderScreen's
 /// convention, since HomeShell already supplies one shared AppBar/Scaffold
 /// for every screen it dispatches.
@@ -1796,7 +1818,7 @@ class ScopedStatsBody extends StatefulWidget {
 
 class _ScopedStatsBodyState extends State<ScopedStatsBody> with SingleTickerProviderStateMixin {
   final _repo = KasaRepo();
-  late final TabController _tab = TabController(length: 5, vsync: this);
+  late final TabController _tab = TabController(length: 4, vsync: this);
   Set<String>? _barcodes;
   Map<String, KasaReceiptNote> _notes = const {};
   StreamSubscription? _notesSub;
@@ -1848,10 +1870,9 @@ class _ScopedStatsBodyState extends State<ScopedStatsBody> with SingleTickerProv
             indicatorColor: AppColors.terracotta,
             labelStyle: const TextStyle(fontWeight: FontWeight.w700, fontSize: 13.5),
             tabs: const [
-              Tab(text: 'Son İşlemler'),
               Tab(text: 'Özet'),
+              Tab(text: 'Son İşlemler'),
               Tab(text: 'İptaller'),
-              Tab(text: 'Fiyat Uyuşmazlığı'),
               Tab(text: 'Ürün Satışları'),
             ],
           ),
@@ -1860,10 +1881,9 @@ class _ScopedStatsBodyState extends State<ScopedStatsBody> with SingleTickerProv
           child: TabBarView(
             controller: _tab,
             children: [
-              _ScopedReceiptsSection(repo: _repo, barcodes: barcodes, notes: _notes, voidOnly: false),
               _ScopedSummarySection(repo: _repo, barcodes: barcodes),
+              _ScopedReceiptsSection(repo: _repo, barcodes: barcodes, notes: _notes, voidOnly: false),
               _ScopedReceiptsSection(repo: _repo, barcodes: barcodes, notes: _notes, voidOnly: true),
-              _MismatchSection(repo: _repo, barcodes: barcodes),
               KasapContent(
                 repo: _repo,
                 barcodesResolver: widget.barcodesResolver,
@@ -2066,23 +2086,19 @@ class _VoidsSectionState extends State<_VoidsSection> {
 
 class _MismatchSection extends StatefulWidget {
   final KasaRepo repo;
-  /// Scopes to just these barcodes (Kasap/Manav) -- null shows every open
-  /// mismatch, unchanged from before.
-  final List<String>? barcodes;
-  const _MismatchSection({required this.repo, this.barcodes});
+  const _MismatchSection({required this.repo});
 
   @override
   State<_MismatchSection> createState() => _MismatchSectionState();
 }
 
 class _MismatchSectionState extends State<_MismatchSection> {
-  late final Stream<List<KasaPriceMismatch>> _openStream =
-      widget.repo.watchOpenMismatches(barcodes: widget.barcodes?.toSet());
+  late final Stream<List<KasaPriceMismatch>> _openStream = widget.repo.watchOpenMismatches();
   bool _includeResolved = false;
   Future<List<KasaPriceMismatch>>? _resolvedFuture;
 
   void _loadResolved() {
-    _resolvedFuture = widget.repo.getMismatches(includeResolved: true, barcodes: widget.barcodes);
+    _resolvedFuture = widget.repo.getMismatches(includeResolved: true);
   }
 
   @override

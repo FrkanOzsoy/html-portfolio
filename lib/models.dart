@@ -721,6 +721,49 @@ class KasaDailyTrendPoint {
   KasaDailyTrendPoint({required this.date, required this.qty, required this.revenue});
 }
 
+/// Exact receipt-level aggregate for a barcode set over a date range --
+/// kasa_receipts_summary_for_barcodes RPC. Powers Kasap/Manav's Özet
+/// metrics and the header line on their Son İşlemler/İptaller tabs.
+class ScopedReceiptsSummary {
+  final int fisSayisi;
+  final num toplam;
+  final num nakit;
+  final num kart;
+  final num indirim;
+  final int iptalSayisi;
+  final num iptalDeger;
+
+  ScopedReceiptsSummary({
+    required this.fisSayisi,
+    required this.toplam,
+    required this.nakit,
+    required this.kart,
+    required this.indirim,
+    required this.iptalSayisi,
+    required this.iptalDeger,
+  });
+
+  static final empty = ScopedReceiptsSummary(
+    fisSayisi: 0,
+    toplam: 0,
+    nakit: 0,
+    kart: 0,
+    indirim: 0,
+    iptalSayisi: 0,
+    iptalDeger: 0,
+  );
+
+  factory ScopedReceiptsSummary.fromJson(Map<String, dynamic> j) => ScopedReceiptsSummary(
+        fisSayisi: ((j['fis_sayisi'] as num?) ?? 0).toInt(),
+        toplam: (j['toplam'] as num?) ?? 0,
+        nakit: (j['nakit'] as num?) ?? 0,
+        kart: (j['kart'] as num?) ?? 0,
+        indirim: (j['indirim'] as num?) ?? 0,
+        iptalSayisi: ((j['iptal_sayisi'] as num?) ?? 0).toInt(),
+        iptalDeger: (j['iptal_deger'] as num?) ?? 0,
+      );
+}
+
 /// Sold vs. iptal (cancelled) split for one product over a date range --
 /// kasa_product_sales_void_breakdown RPC. "Iptal" covers both a whole
 /// voided receipt and an individual line-level reversal (line_type='IPT').
