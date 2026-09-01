@@ -239,10 +239,38 @@ class KasaRepo {
     return rows.map((r) => KasaReceipt.fromJson(r)).toList();
   }
 
+  /// Receipts that touched at least one of [barcodes] -- backs the scoped
+  /// Son İşlemler/İptaller views inside Kasap/Manav. One-shot (via
+  /// kasa_receipts_for_barcodes RPC, since a receipt/line join can't be
+  /// expressed as a realtime `.stream()` the way watchRecentReceipts is),
+  /// so these scoped views trade liveness for the ability to filter by
+  /// barcode set. Whole receipts are returned even if only one line
+  /// matched -- same approximation the rest of the scoped summary makes.
+  Future<List<KasaReceipt>> getReceiptsForBarcodes({
+    required List<String> barcodes,
+    DateTime? from,
+    DateTime? to,
+    bool voidOnly = false,
+    int limit = 60,
+  }) async {
+    if (barcodes.isEmpty) return [];
+    final rows = await _client.rpc('kasa_receipts_for_barcodes', params: {
+      'p_barcodes': barcodes,
+      'p_from': from?.toUtc().toIso8601String(),
+      'p_to': to?.toUtc().toIso8601String(),
+      'p_void_only': voidOnly,
+      'p_limit': limit,
+    }).timeout(const Duration(seconds: 15));
+    return (rows as List).map((r) => KasaReceipt.fromJson(r as Map<String, dynamic>)).toList();
+  }
+
   // ---- Fiyat Uyuşmazlığı -------------------------------------------------
 
   /// Live stream of *open* (unresolved) price mismatches, newest first.
-  Stream<List<KasaPriceMismatch>> watchOpenMismatches({int limit = 100}) {
+  /// When [barcodes] is given, only mismatches for those barcodes pass
+  /// through (client-side -- the underlying realtime stream can't easily
+  /// carry an arbitrary IN-filter alongside order/limit).
+  Stream<List<KasaPriceMismatch>> watchOpenMismatches({int limit = 100, Set<String>? barcodes}) {
     return _client
         .from('kasa_price_mismatches')
         .stream(primaryKey: ['id'])
@@ -250,13 +278,18 @@ class KasaRepo {
         .limit(limit)
         .map((rows) => rows
             .map((r) => KasaPriceMismatch.fromJson(r))
-            .where((m) => !m.resolved)
+            .where((m) => !m.resolved && (barcodes == null || barcodes.contains(m.barcode)))
             .toList());
   }
 
-  Future<List<KasaPriceMismatch>> getMismatches({bool includeResolved = false, int limit = 200}) async {
+  Future<List<KasaPriceMismatch>> getMismatches({
+    bool includeResolved = false,
+    int limit = 200,
+    List<String>? barcodes,
+  }) async {
     var q = _client.from('kasa_price_mismatches').select();
     if (!includeResolved) q = q.eq('resolved', false);
+    if (barcodes != null) q = q.inFilter('barcode', barcodes);
     final rows = await q.order('sold_at', ascending: false).limit(limit).timeout(const Duration(seconds: 10));
     return rows.map((r) => KasaPriceMismatch.fromJson(r)).toList();
   }

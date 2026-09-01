@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 import '../app_settings.dart';
-import '../data_repo.dart';
 import '../format.dart';
 import '../kasa_repo.dart';
 import '../models.dart';
@@ -29,16 +28,24 @@ String _dm(DateTime dt) {
 
 enum _KasapPreset { today, last7, last30, last90, thisMonth, lastMonth, custom }
 
-/// "Kasap" -- sales stats scoped to the SARKUTERI list's PLU 50-100 items
-/// (real butcher/meat products). Mirrors "Ürün Satışları"'s summary + product
-/// table (same ProductSalesReportTable widget, so the sold/iptal drill-down
-/// on row-tap works here too), plus a daily qty/revenue trend below it.
-/// Reused two ways: nested as a tab inside İstatistik (desktop always,
-/// mobile only Furkan/Ahmet -- see istatistik_screen.dart), and standalone
-/// via [KasapScreen] for Ramazan's own top-level mobile destination.
+/// Sales stats scoped to a resolved barcode set (Kasap: SARKUTERI PLU
+/// 50-100; Manav: MANAV PLU 1-44). This is the "Ürün Satışları" tab content
+/// for both -- summary + product table (same ProductSalesReportTable
+/// widget, so the sold/iptal drill-down on row-tap works here too), plus a
+/// daily qty/revenue trend below it. Reused in three places: nested as an
+/// İstatistik tab (mobile, Furkan/Ahmet only -- see istatistik_screen.dart),
+/// and as one of [ScopedStatsBody]'s five tabs (desktop top-level sections,
+/// and Ramazan's standalone Kasap destination).
 class KasapContent extends StatefulWidget {
   final KasaRepo repo;
-  const KasapContent({super.key, required this.repo});
+  final Future<Set<String>> Function() barcodesResolver;
+  final String emptyMessage;
+  const KasapContent({
+    super.key,
+    required this.repo,
+    required this.barcodesResolver,
+    this.emptyMessage = 'Barkod seti bulunamadı.',
+  });
 
   @override
   State<KasapContent> createState() => _KasapContentState();
@@ -57,7 +64,7 @@ class _KasapContentState extends State<KasapContent> {
   void initState() {
     super.initState();
     _computeDatesForPreset(_preset);
-    DataRepo().getKasapBarcodes().then((barcodes) {
+    widget.barcodesResolver().then((barcodes) {
       if (!mounted) return;
       setState(() {
         _barcodes = barcodes;
@@ -157,13 +164,13 @@ class _KasapContentState extends State<KasapContent> {
       return const Center(child: CircularProgressIndicator());
     }
     if (_barcodes!.isEmpty) {
-      return const Padding(
-        padding: EdgeInsets.all(24),
+      return Padding(
+        padding: const EdgeInsets.all(24),
         child: Center(
           child: Text(
-            'Kasap barkod seti bulunamadı (SARKUTERİ listesi eksik ya da PLU 50-100 aralığında ürün yok).',
+            widget.emptyMessage,
             textAlign: TextAlign.center,
-            style: TextStyle(color: AppColors.brown500),
+            style: const TextStyle(color: AppColors.brown500),
           ),
         ),
       );
@@ -331,22 +338,6 @@ class _KasapContentState extends State<KasapContent> {
           ),
         ],
       ),
-    );
-  }
-}
-
-/// Ramazan's standalone mobile destination -- same content as the nested
-/// İstatistik tab, in its own Scaffold (the convention every other
-/// HomeShell-dispatched standalone screen already follows, e.g.
-/// TeraziyeGonderScreen).
-class KasapScreen extends StatelessWidget {
-  const KasapScreen({super.key});
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(title: const Text('Kasap')),
-      body: SafeArea(child: KasapContent(repo: KasaRepo())),
     );
   }
 }

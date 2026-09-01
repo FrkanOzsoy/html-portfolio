@@ -50,6 +50,11 @@ const reservedTeraziyeListNames = {'MANAV', 'SARKUTERI'};
 const kasapPluMin = 50;
 const kasapPluMax = 100;
 
+/// PLU range on the MANAV list the "Manav" İstatistik subsection tracks --
+/// the real by-weight produce items; Teraziye stops assigning past PLU44.
+const manavPluMin = 1;
+const manavPluMax = 44;
+
 /// A KDV (VAT) department -- the till-PC's fixed, pre-set list (e.g.
 /// "MANAV" 1%, "MUHTELIF GIDA % 20" 20%). A product's effective KDV rate is
 /// set indirectly by assigning it to one of these, not by entering a raw

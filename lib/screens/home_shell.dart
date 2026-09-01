@@ -15,7 +15,6 @@ import 'lists_screen.dart';
 import 'bulk_price_import_screen.dart';
 import 'kasaya_gonder_screen.dart';
 import 'istatistik_screen.dart';
-import 'kasap_screen.dart';
 import 'messages_screen.dart';
 import 'pending_ops_debug_screen.dart';
 import 'product_create_screen.dart';
@@ -57,14 +56,18 @@ class _HomeShellState extends State<HomeShell> with WidgetsBindingObserver {
   // (INTER_BOS mirror): Son İşlemler, Günlük Özet, İptaller, Fiyat
   // Uyuşmazlığı, Z Raporları, Ölü Stok.
   static const _idIstatistik = 7;
-  // Mobile-only -- Ramazan's standalone replacement for İstatistik (he
-  // doesn't get the rest of İstatistik at all, see _mobileOrderRamazan).
-  // Never appears in _desktopOrder.
+  // Desktop: its own top-level section (after İstatistik). Mobile: Ramazan's
+  // standalone replacement for İstatistik (he doesn't get the rest of
+  // İstatistik at all, see _mobileOrderRamazan) -- Furkan/Ahmet instead see
+  // it nested inside İstatistik itself (istatistik_screen.dart), not here.
   static const _idKasap = 8;
+  // Desktop-only -- its own top-level section, same as _idKasap. Never
+  // appears on mobile at all outside İstatistik's own nested tab.
+  static const _idManav = 9;
 
   static const _titles = [
     'Tarayıcı', 'Ürün Ara', 'Listelerim', 'Kasaya Gönder', 'Mesajlar', 'Teraziye Gönder', 'Ayarlar', 'İstatistik',
-    'Kasap',
+    'Kasap', 'Manav',
   ];
 
   // Feeds both chrome styles below -- only how they're laid out (bottom
@@ -80,6 +83,7 @@ class _HomeShellState extends State<HomeShell> with WidgetsBindingObserver {
     (icon: Icons.settings_outlined, label: 'Ayarlar'),
     (icon: Icons.insights_outlined, label: 'İstatistik'),
     (icon: Icons.set_meal_outlined, label: 'Kasap'),
+    (icon: Icons.eco_outlined, label: 'Manav'),
   ];
 
   // Desktop staff live in Ürün Ara most of the day (that's the whole point
@@ -90,7 +94,9 @@ class _HomeShellState extends State<HomeShell> with WidgetsBindingObserver {
   // work there; a real store till reads barcodes through a physical
   // USB scanner typed straight into Ürün Ara anyway, not a webcam. Mobile
   // keeps the original order and the scanner (its primary workflow there).
-  static const _desktopOrder = [_idSearch, _idLists, _idGonder, _idTerazi, _idMessages, _idIstatistik, _idAyarlar];
+  static const _desktopOrder = [
+    _idSearch, _idLists, _idGonder, _idTerazi, _idMessages, _idIstatistik, _idKasap, _idManav, _idAyarlar,
+  ];
   static const _mobileOrder = [_idScanner, _idSearch, _idLists, _idGonder, _idMessages, _idIstatistik];
   // Ramazan doesn't get İstatistik at all on mobile -- Kasap replaces it as
   // its own standalone destination in that same nav slot instead of living
@@ -237,7 +243,8 @@ class _HomeShellState extends State<HomeShell> with WidgetsBindingObserver {
         _idTerazi => const TeraziyeGonderScreen(),
         _idAyarlar => const SettingsScreen(),
         _idIstatistik => _isDesktop ? const IstatistikScreen() : const MobileIstatistikGate(),
-        _idKasap => const KasapScreen(),
+        _idKasap => ScopedStatsBody(title: 'Kasap', barcodesResolver: DataRepo().getKasapBarcodes),
+        _idManav => ScopedStatsBody(title: 'Manav', barcodesResolver: DataRepo().getManavBarcodes),
         _ => const MessagesScreen(),
       };
 

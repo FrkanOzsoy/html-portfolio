@@ -411,21 +411,27 @@ class DataRepo {
   /// falls in [kasapPluMin, kasapPluMax]. Same source list/PLU convention
   /// as kasaya_gonder_screen.dart's Teraziye tab -- reused here purely to
   /// scope the Kasap İstatistik subsection, unrelated to scale export.
-  Future<Set<String>> getKasapBarcodes() async {
+  Future<Set<String>> getKasapBarcodes() => _plusScopedBarcodes('SARKUTERI', kasapPluMin, kasapPluMax);
+
+  /// Manav barcode set: MANAV list_items whose custom_data.plu falls in
+  /// [manavPluMin, manavPluMax] -- the real by-weight produce items.
+  Future<Set<String>> getManavBarcodes() => _plusScopedBarcodes('MANAV', manavPluMin, manavPluMax);
+
+  Future<Set<String>> _plusScopedBarcodes(String listName, int pluMin, int pluMax) async {
     final lists = await getReservedTeraziyeLists();
-    ProductList? sarkuteri;
+    ProductList? target;
     for (final l in lists) {
-      if (l.name == 'SARKUTERI') {
-        sarkuteri = l;
+      if (l.name == listName) {
+        target = l;
         break;
       }
     }
-    if (sarkuteri == null) return {};
-    final items = await getListItems(sarkuteri.id);
+    if (target == null) return {};
+    final items = await getListItems(target.id);
     final barcodes = <String>{};
     for (final it in items) {
       final plu = int.tryParse('${it.customData['plu'] ?? ''}');
-      if (plu != null && plu >= kasapPluMin && plu <= kasapPluMax) {
+      if (plu != null && plu >= pluMin && plu <= pluMax) {
         barcodes.add(it.barcode);
       }
     }
