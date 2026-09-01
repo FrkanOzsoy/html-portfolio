@@ -21,7 +21,7 @@ publish_to: 'none' # Remove this line if you wish to publish to pub.dev
 # with --split-per-abi, so the arm64 APK got a +2000 ABI offset (1.9.4+27 -> 2027).
 # Shorebird builds a universal APK with no offset, so from 1.9.5 on the build
 # number itself carries the 2xxx value -- bump it by 1 per release (2028, 2029...).
-version: 1.9.10+2033
+version: 1.9.11+2034
 
 environment:
   sdk: ^3.13.0
