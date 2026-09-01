@@ -1,14 +1,23 @@
+import 'dart:typed_data';
 import 'package:excel/excel.dart' hide Border;
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
+import 'package:syncfusion_flutter_pdf/pdf.dart';
+import '../catalog_import.dart';
 import '../data_repo.dart';
 import '../excel_import.dart';
 import '../format.dart';
 import '../models.dart';
 import '../pdf_import.dart';
 import '../theme.dart';
+import '../widgets/import_layout_mockup.dart';
 
 enum _RowStatus { update, newProduct, invalidBarcode, missingPrice }
+
+/// Which shape the picked file is -- a plain table, or a photo-card
+/// catalog. Asked once, right after the file is picked; the two are parsed
+/// by completely different code (excel_import/pdf_import vs catalog_import).
+enum _ImportLayout { normal, catalog }
 
 class _ReviewRow {
   final ImportRow raw;
@@ -81,9 +90,26 @@ class _BulkPriceImportScreenState extends State<BulkPriceImportScreen> {
       final bytes = await picked.readAsBytes();
       final isPdf = picked.name.toLowerCase().endsWith('.pdf');
 
+      final layout = await _askLayout(looksLikeCatalog(_sampleText(bytes, isPdf: isPdf)));
+      if (layout == null) {
+        setState(() => _loading = false);
+        return;
+      }
+      final catalog = layout == _ImportLayout.catalog;
+
       List<List<String>> grid;
       String? dropNote;
-      if (isPdf) {
+      if (catalog) {
+        final result = isPdf ? catalogFromPdfBytes(bytes) : catalogFromExcelBytes(bytes);
+        grid = result.grid;
+        if (grid.isEmpty) {
+          throw Exception(isPdf ? 'Katalogdan ürün okunamadı -- taranmış PDF olabilir.' : 'Katalogdan ürün okunamadı.');
+        }
+        final dropped = result.totalBoxes - result.keptBoxes;
+        if (dropped > 0) {
+          dropNote = '$dropped kutucuk okunamadı (${result.keptBoxes}/${result.totalBoxes}).';
+        }
+      } else if (isPdf) {
         final result = gridFromPdfBytes(bytes);
         grid = result.grid;
         if (result.totalRows == 0) {
@@ -100,7 +126,20 @@ class _BulkPriceImportScreenState extends State<BulkPriceImportScreen> {
         grid = gridFromExcelRows(sheet.rows);
       }
 
-      final guess = detectColumns(grid);
+      // Catalog columns are fixed (we built the grid) -- barcode/name/
+      // Kategori/Birim/KDV/Öneri Satış/Koli, data from row 1. Default price
+      // = Öneri Satış Fiyat (the shelf price); the remap dropdowns still
+      // let a human switch it.
+      final guess = catalog
+          ? ColumnGuess(
+              barcodeCol: catalogColumnGuess.barcodeCol,
+              nameCol: catalogColumnGuess.nameCol,
+              priceCol: catalogColumnGuess.priceCol,
+              kdvCol: catalogColumnGuess.kdvCol,
+              headerRowIndex: 0,
+              dataStartRow: catalogColumnGuess.dataStartRow,
+            )
+          : detectColumns(grid);
       setState(() {
         _fileName = picked.name;
         _rows = grid;
@@ -117,6 +156,65 @@ class _BulkPriceImportScreenState extends State<BulkPriceImportScreen> {
     } finally {
       if (mounted) setState(() => _loading = false);
     }
+  }
+
+  /// A slice of the file's text used only to pre-select a layout in the
+  /// picker -- the first page of a PDF, or the first ~40 rows of a sheet.
+  String _sampleText(Uint8List bytes, {required bool isPdf}) {
+    try {
+      if (isPdf) {
+        final doc = PdfDocument(inputBytes: bytes);
+        try {
+          return PdfTextExtractor(doc).extractText(startPageIndex: 0, endPageIndex: 0);
+        } finally {
+          doc.dispose();
+        }
+      }
+      final excel = Excel.decodeBytes(bytes);
+      if (excel.tables.isEmpty) return '';
+      final sheet = excel.tables[excel.tables.keys.first]!;
+      return [
+        for (final row in sheet.rows.take(40))
+          [for (final c in row) c?.value?.toString() ?? ''].join(' '),
+      ].join('\n');
+    } catch (_) {
+      return '';
+    }
+  }
+
+  Future<_ImportLayout?> _askLayout(bool guessCatalog) {
+    return showDialog<_ImportLayout>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Dosya tipi'),
+        contentPadding: const EdgeInsets.fromLTRB(20, 16, 20, 8),
+        content: SizedBox(
+          width: 420,
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Expanded(
+                child: _LayoutCard(
+                  label: 'Normal tablo',
+                  suggested: !guessCatalog,
+                  mockup: const ImportLayoutMockup.normal(),
+                  onTap: () => Navigator.of(ctx).pop(_ImportLayout.normal),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: _LayoutCard(
+                  label: 'Katalog (resimli)',
+                  suggested: guessCatalog,
+                  mockup: const ImportLayoutMockup.catalog(),
+                  onTap: () => Navigator.of(ctx).pop(_ImportLayout.catalog),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
   }
 
   Future<void> _reparse() async {
@@ -517,6 +615,62 @@ class _BulkPriceImportScreenState extends State<BulkPriceImportScreen> {
       style: ElevatedButton.styleFrom(backgroundColor: AppColors.brown800, padding: const EdgeInsets.symmetric(vertical: 14)),
       icon: const Icon(Icons.send_outlined, size: 18),
       label: Text('${_selected.length} Satırı İçe Aktar'),
+    );
+  }
+}
+
+class _LayoutCard extends StatelessWidget {
+  const _LayoutCard({
+    required this.label,
+    required this.suggested,
+    required this.mockup,
+    required this.onTap,
+  });
+
+  final String label;
+  final bool suggested;
+  final Widget mockup;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(AppRadius.box),
+      child: Container(
+        padding: const EdgeInsets.all(10),
+        decoration: BoxDecoration(
+          color: AppColors.creamCard,
+          borderRadius: BorderRadius.circular(AppRadius.box),
+          border: Border.all(
+            color: suggested ? AppColors.terracotta : AppColors.creamBorder,
+            width: suggested ? 2 : 1,
+          ),
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            mockup,
+            const SizedBox(height: 8),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                if (suggested) ...[
+                  const Icon(Icons.check_circle, size: 14, color: AppColors.terracotta),
+                  const SizedBox(width: 4),
+                ],
+                Flexible(
+                  child: Text(
+                    label,
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: AppColors.brown800),
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
     );
   }
 }

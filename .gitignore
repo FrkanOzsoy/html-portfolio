@@ -48,3 +48,6 @@ app.*.map.json
 
 # Widget Preview related
 .widget_preview/
+
+# local test fixtures (large binaries, not tracked)
+/test/fixtures/
