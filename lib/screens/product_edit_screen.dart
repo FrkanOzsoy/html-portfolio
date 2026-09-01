@@ -33,6 +33,10 @@ class _ProductEditScreenState extends State<ProductEditScreen> {
   late final TextEditingController _barcodeController;
   late final Future<List<KdvDepartment>> _departmentsFuture = _repo.getKdvDepartments();
   int? _selectedDepartment;
+  // Only true once the user actually touches the KDV dropdown themselves --
+  // _loadStaged's rate-based fallback below fills _selectedDepartment purely
+  // so the dropdown doesn't look blank, and that guess must never get staged.
+  bool _departmentTouchedByUser = false;
   String? _priceError;
   String? _barcodeError;
 
@@ -52,7 +56,9 @@ class _ProductEditScreenState extends State<ProductEditScreen> {
   // If nothing's staged for the KDV department, falls back to whichever
   // department matches the product's own synced kdv_rate (see
   // matchKdvDepartmentByRate) so the dropdown opens on the product's
-  // actual current KDV instead of blank.
+  // actual current KDV instead of blank. Neither branch counts as the user
+  // touching the dropdown -- _departmentTouchedByUser stays false, so a
+  // save that never involved the department doesn't restage this guess.
   Future<void> _loadStaged() async {
     final changes = await _repo.getPendingChangesForBarcode(widget.product.barcode);
     for (final c in changes) {
@@ -117,7 +123,7 @@ class _ProductEditScreenState extends State<ProductEditScreen> {
       );
     }
     final nameValue = _nameController.text.trim();
-    if (nameValue.isNotEmpty && nameValue != p.stockname) {
+    if (nameValue.isNotEmpty && nameValue != p.stockname.trim()) {
       await _repo.stageChange(
         barcode: p.barcode,
         field: 'stockname',
@@ -127,7 +133,7 @@ class _ProductEditScreenState extends State<ProductEditScreen> {
       );
     }
     final dept = _selectedDepartment;
-    if (dept != null) {
+    if (dept != null && _departmentTouchedByUser) {
       await _repo.stageChange(
         barcode: p.barcode,
         field: 'kasadepid',
@@ -200,7 +206,10 @@ class _ProductEditScreenState extends State<ProductEditScreen> {
                       for (final d in departments)
                         DropdownMenuItem(value: d.kasadepid, child: Text(d.displayLabel, overflow: TextOverflow.ellipsis)),
                     ],
-                    onChanged: (v) => setState(() => _selectedDepartment = v),
+                    onChanged: (v) => setState(() {
+                      _selectedDepartment = v;
+                      _departmentTouchedByUser = true;
+                    }),
                   );
                 },
               ),

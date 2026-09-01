@@ -43,6 +43,13 @@ class Product {
 /// drift apart into two different name sets.
 const reservedTeraziyeListNames = {'MANAV', 'SARKUTERI'};
 
+/// PLU range on the SARKUTERI list that the "Kasap" İstatistik subsection
+/// tracks (real butcher/meat items -- KIYMA, TRANÇ, ANTRIKOT, etc; the
+/// SARKUTERI list also carries cheese/deli items at lower PLUs, out of
+/// scope here).
+const kasapPluMin = 50;
+const kasapPluMax = 100;
+
 /// A KDV (VAT) department -- the till-PC's fixed, pre-set list (e.g.
 /// "MANAV" 1%, "MUHTELIF GIDA % 20" 20%). A product's effective KDV rate is
 /// set indirectly by assigning it to one of these, not by entering a raw
@@ -695,6 +702,47 @@ class KasaProductSalesReport {
             ? DateTime.parse(j['last_sold_at'] as String)
             : null,
         daysSince: (j['days_since'] as num?)?.toInt(),
+      );
+}
+
+/// One day's summed qty/revenue for a barcode set -- the Kasap daily-trend
+/// table. Built by client-side grouping of kasa_product_sales_daily rows,
+/// not decoded from a single RPC row.
+class KasaDailyTrendPoint {
+  final DateTime date;
+  final num qty;
+  final num revenue;
+
+  KasaDailyTrendPoint({required this.date, required this.qty, required this.revenue});
+}
+
+/// Sold vs. iptal (cancelled) split for one product over a date range --
+/// kasa_product_sales_void_breakdown RPC. "Iptal" covers both a whole
+/// voided receipt and an individual line-level reversal (line_type='IPT').
+class SalesVoidBreakdown {
+  final num soldQty;
+  final num soldRevenue;
+  final int soldCount;
+  final num voidQty;
+  final num voidRevenue;
+  final int voidCount;
+
+  SalesVoidBreakdown({
+    required this.soldQty,
+    required this.soldRevenue,
+    required this.soldCount,
+    required this.voidQty,
+    required this.voidRevenue,
+    required this.voidCount,
+  });
+
+  factory SalesVoidBreakdown.fromJson(Map<String, dynamic> j) => SalesVoidBreakdown(
+        soldQty: (j['sold_qty'] as num?) ?? 0,
+        soldRevenue: (j['sold_revenue'] as num?) ?? 0,
+        soldCount: ((j['sold_count'] as num?) ?? 0).toInt(),
+        voidQty: (j['void_qty'] as num?) ?? 0,
+        voidRevenue: (j['void_revenue'] as num?) ?? 0,
+        voidCount: ((j['void_count'] as num?) ?? 0).toInt(),
       );
 }
 

@@ -407,6 +407,31 @@ class DataRepo {
 
   Future<ProductList?> getListById(String id) => _localDb.getListById(id);
 
+  /// Kasap (butcher) barcode set: SARKUTERI list_items whose custom_data.plu
+  /// falls in [kasapPluMin, kasapPluMax]. Same source list/PLU convention
+  /// as kasaya_gonder_screen.dart's Teraziye tab -- reused here purely to
+  /// scope the Kasap İstatistik subsection, unrelated to scale export.
+  Future<Set<String>> getKasapBarcodes() async {
+    final lists = await getReservedTeraziyeLists();
+    ProductList? sarkuteri;
+    for (final l in lists) {
+      if (l.name == 'SARKUTERI') {
+        sarkuteri = l;
+        break;
+      }
+    }
+    if (sarkuteri == null) return {};
+    final items = await getListItems(sarkuteri.id);
+    final barcodes = <String>{};
+    for (final it in items) {
+      final plu = int.tryParse('${it.customData['plu'] ?? ''}');
+      if (plu != null && plu >= kasapPluMin && plu <= kasapPluMax) {
+        barcodes.add(it.barcode);
+      }
+    }
+    return barcodes;
+  }
+
   Stream<List<ProductList>> watchLists() async* {
     yield await getLists();
     await for (final _ in _localDb.changes) {

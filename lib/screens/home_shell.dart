@@ -15,6 +15,7 @@ import 'lists_screen.dart';
 import 'bulk_price_import_screen.dart';
 import 'kasaya_gonder_screen.dart';
 import 'istatistik_screen.dart';
+import 'kasap_screen.dart';
 import 'messages_screen.dart';
 import 'pending_ops_debug_screen.dart';
 import 'product_create_screen.dart';
@@ -56,9 +57,14 @@ class _HomeShellState extends State<HomeShell> with WidgetsBindingObserver {
   // (INTER_BOS mirror): Son İşlemler, Günlük Özet, İptaller, Fiyat
   // Uyuşmazlığı, Z Raporları, Ölü Stok.
   static const _idIstatistik = 7;
+  // Mobile-only -- Ramazan's standalone replacement for İstatistik (he
+  // doesn't get the rest of İstatistik at all, see _mobileOrderRamazan).
+  // Never appears in _desktopOrder.
+  static const _idKasap = 8;
 
   static const _titles = [
     'Tarayıcı', 'Ürün Ara', 'Listelerim', 'Kasaya Gönder', 'Mesajlar', 'Teraziye Gönder', 'Ayarlar', 'İstatistik',
+    'Kasap',
   ];
 
   // Feeds both chrome styles below -- only how they're laid out (bottom
@@ -73,6 +79,7 @@ class _HomeShellState extends State<HomeShell> with WidgetsBindingObserver {
     (icon: Icons.monitor_weight_outlined, label: 'Terazi'),
     (icon: Icons.settings_outlined, label: 'Ayarlar'),
     (icon: Icons.insights_outlined, label: 'İstatistik'),
+    (icon: Icons.set_meal_outlined, label: 'Kasap'),
   ];
 
   // Desktop staff live in Ürün Ara most of the day (that's the whole point
@@ -85,7 +92,17 @@ class _HomeShellState extends State<HomeShell> with WidgetsBindingObserver {
   // keeps the original order and the scanner (its primary workflow there).
   static const _desktopOrder = [_idSearch, _idLists, _idGonder, _idTerazi, _idMessages, _idIstatistik, _idAyarlar];
   static const _mobileOrder = [_idScanner, _idSearch, _idLists, _idGonder, _idMessages, _idIstatistik];
-  List<int> get _tabOrder => _isDesktop ? _desktopOrder : _mobileOrder;
+  // Ramazan doesn't get İstatistik at all on mobile -- Kasap replaces it as
+  // its own standalone destination in that same nav slot instead of living
+  // nested inside İstatistik (see _isRamazan/_screenFor).
+  static const _mobileOrderRamazan = [_idScanner, _idSearch, _idLists, _idGonder, _idMessages, _idKasap];
+  List<int> get _tabOrder => _isDesktop ? _desktopOrder : (_isRamazan == true ? _mobileOrderRamazan : _mobileOrder);
+
+  // Mobile-only; resolved once off the device's own staff name. null while
+  // resolving -- build() shows a brief spinner rather than the wrong nav
+  // (default first, correct second) which would visibly swap out from under
+  // whichever tab position the user happens to be sitting on.
+  bool? _isRamazan;
 
   // A phone or tablet gets the OS-native bottom tab bar; anything else
   // (Windows, and Linux/macOS if this is ever built for them) gets a
@@ -126,11 +143,17 @@ class _HomeShellState extends State<HomeShell> with WidgetsBindingObserver {
   @override
   void initState() {
     super.initState();
-    // Desktop honours the "Açılış Sekmesi" setting (Ayarlar tab); mobile
-    // always starts on the scanner, its primary workflow.
     if (_isDesktop) {
+      // Desktop honours the "Açılış Sekmesi" setting (Ayarlar tab); mobile
+      // always starts on the scanner, its primary workflow.
       final pos = _tabOrder.indexOf(appSettings.defaultTabId);
       if (pos >= 0) _index = pos;
+    } else {
+      _repo.getStaffName().then((name) {
+        if (!mounted) return;
+        final n = name?.trim().toLowerCase();
+        setState(() => _isRamazan = n == 'ramazan');
+      });
     }
     // Idempotent -- safe whether we arrived here via a fresh sign-in or a
     // resumed session (main.dart skips straight to HomeShell for the latter).
@@ -214,6 +237,7 @@ class _HomeShellState extends State<HomeShell> with WidgetsBindingObserver {
         _idTerazi => const TeraziyeGonderScreen(),
         _idAyarlar => const SettingsScreen(),
         _idIstatistik => _isDesktop ? const IstatistikScreen() : const MobileIstatistikGate(),
+        _idKasap => const KasapScreen(),
         _ => const MessagesScreen(),
       };
 
@@ -229,6 +253,9 @@ class _HomeShellState extends State<HomeShell> with WidgetsBindingObserver {
   @override
   Widget build(BuildContext context) {
     final desktop = _isDesktop;
+    if (!desktop && _isRamazan == null) {
+      return const Scaffold(body: Center(child: CircularProgressIndicator()));
+    }
     final order = _tabOrder;
     return Scaffold(
       appBar: AppBar(
@@ -401,11 +428,18 @@ class _HomeShellState extends State<HomeShell> with WidgetsBindingObserver {
                   selectedIcon: Icon(Icons.chat_bubble, color: Colors.white),
                   label: 'Mesajlar',
                 ),
-                const NavigationDestination(
-                  icon: Icon(Icons.insights_outlined, color: AppColors.brown300),
-                  selectedIcon: Icon(Icons.insights, color: Colors.white),
-                  label: 'İstatistik',
-                ),
+                if (_isRamazan == true)
+                  const NavigationDestination(
+                    icon: Icon(Icons.set_meal_outlined, color: AppColors.brown300),
+                    selectedIcon: Icon(Icons.set_meal, color: Colors.white),
+                    label: 'Kasap',
+                  )
+                else
+                  const NavigationDestination(
+                    icon: Icon(Icons.insights_outlined, color: AppColors.brown300),
+                    selectedIcon: Icon(Icons.insights, color: Colors.white),
+                    label: 'İstatistik',
+                  ),
               ],
             ),
     );

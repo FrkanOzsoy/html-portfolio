@@ -79,6 +79,18 @@ String _formatFullDateTime(DateTime dt) {
       '${local.hour.toString().padLeft(2, '0')}:${local.minute.toString().padLeft(2, '0')}';
 }
 
+/// Every staged field for one product renders as a single card (see
+/// _PendingChangeCard) instead of one card per field -- this collapses a
+/// requester's flat change list down to barcode -> its fields, preserving
+/// the original (stream) order of first appearance.
+Map<String, List<PendingChange>> _groupByBarcode(List<PendingChange> changes) {
+  final byBarcode = <String, List<PendingChange>>{};
+  for (final c in changes) {
+    byBarcode.putIfAbsent(c.barcode, () => []).add(c);
+  }
+  return byBarcode;
+}
+
 /// Review every staged product edit -- proposed from a list item's pencil
 /// icon or directly from "Ürün Ara" -- in one place, pick which ones to
 /// actually commit, and send just those through the real Digisoft/kasa
@@ -142,19 +154,26 @@ class _KasayaGonderScreenState extends State<KasayaGonderScreen> with SingleTick
     }
   }
 
-  void _toggleSelect(String id, bool selected) {
+  // A product's pending fields are always selected/revoked together --
+  // see _PendingChangeCard, which now shows every staged field for one
+  // barcode as a single card instead of one card per field.
+  void _toggleSelectBarcode(List<PendingChange> changes, bool selected) {
     setState(() {
-      if (selected) {
-        _selectedIds.add(id);
-      } else {
-        _selectedIds.remove(id);
+      for (final c in changes) {
+        if (selected) {
+          _selectedIds.add(c.id);
+        } else {
+          _selectedIds.remove(c.id);
+        }
       }
     });
   }
 
-  Future<void> _revoke(PendingChange change) async {
-    setState(() => _selectedIds.remove(change.id));
-    await _repo.unstageChange(change.id);
+  Future<void> _revokeBarcode(List<PendingChange> changes) async {
+    setState(() => _selectedIds.removeAll(changes.map((c) => c.id)));
+    for (final c in changes) {
+      await _repo.unstageChange(c.id);
+    }
   }
 
   // Bulk counterpart to the single swipe-to-revoke on each card -- for
@@ -302,7 +321,13 @@ class _KasayaGonderScreenState extends State<KasayaGonderScreen> with SingleTick
                 builder: (context, createSnap) {
                   final creates = createSnap.data ?? [];
                   _latestCreates = creates;
-                  _selectedCreateIds.retainAll(creates.map((c) => c.id));
+                  // Own-device name, normalized the same way every grouping
+                  // key below is -- this is the single "mine vs. theirs" test
+                  // the whole tab is filtered through.
+                  final ownName = _currentStaffName ?? 'Bilinmeyen Kullanıcı';
+                  final ownCreates =
+                      creates.where((c) => (c.requestedBy ?? 'Bilinmeyen Kullanıcı') == ownName).toList();
+                  _selectedCreateIds.retainAll(ownCreates.map((c) => c.id));
                   return StreamBuilder<List<PendingChange>>(
                 stream: _pendingChangesStream,
                 builder: (context, snapshot) {
@@ -318,6 +343,10 @@ class _KasayaGonderScreenState extends State<KasayaGonderScreen> with SingleTick
                   // catch: two different people mid-editing the same
                   // product at once) is unsafe to send blind -- flagged and
                   // blocked from selection until someone reverts theirs.
+                  // Computed from EVERY device's rows (not just this one's),
+                  // same as _alreadyApplied below -- those safety checks stay
+                  // global even though the cards themselves are now filtered
+                  // to this device's own.
                   final requestersByBarcode = <String, Set<String>>{};
                   for (final c in changes) {
                     requestersByBarcode.putIfAbsent(c.barcode, () => {}).add(c.requestedBy ?? 'Bilinmeyen Kullanıcı');
@@ -326,25 +355,27 @@ class _KasayaGonderScreenState extends State<KasayaGonderScreen> with SingleTick
                     for (final e in requestersByBarcode.entries)
                       if (e.value.length > 1) e.key,
                   };
-                  final selectableChanges = changes.where((c) => !conflictedBarcodes.contains(c.barcode)).toList();
+                  // Only this device's own changes are ever rendered or
+                  // selectable -- everyone's changes still feed the conflict
+                  // check above, they're just not shown as cards here.
+                  final ownChanges = changes.where((c) => (c.requestedBy ?? 'Bilinmeyen Kullanıcı') == ownName).toList();
+                  final selectableChanges = ownChanges.where((c) => !conflictedBarcodes.contains(c.barcode)).toList();
 
                   // "Tümünü Seç" spans both the non-conflicted changes and
-                  // every staged new product.
+                  // every staged new product -- both already own-device-only.
                   final selChangeIds = selectableChanges.map((c) => c.id).toSet();
-                  final createIds = creates.map((c) => c.id).toSet();
+                  final createIds = ownCreates.map((c) => c.id).toSet();
                   final hasAnySelectable = selChangeIds.isNotEmpty || createIds.isNotEmpty;
                   final allSelected = hasAnySelectable &&
                       selChangeIds.every(_selectedIds.contains) &&
                       createIds.every(_selectedCreateIds.contains);
 
-                  // Grouped by who staged it (not by list, like before) --
-                  // this is a shared, global staging area (every device
-                  // sees every change), so it's easy to mistake someone
-                  // else's proposal for your own or vice versa. Other
-                  // people's groups sort first (most recently active
-                  // first), this device's own group always sorts last.
+                  // Grouped by who staged it -- collapses to at most one
+                  // group now that ownChanges is already this device's own,
+                  // so the "Sizin Bekleyen Değişiklikleriniz" header below
+                  // always applies and the sort is a no-op tie-breaker.
                   final grouped = <String, List<PendingChange>>{};
-                  for (final c in changes) {
+                  for (final c in ownChanges) {
                     grouped.putIfAbsent(c.requestedBy ?? 'Bilinmeyen Kullanıcı', () => []).add(c);
                   }
                   DateTime mostRecent(List<PendingChange> group) =>
@@ -364,7 +395,7 @@ class _KasayaGonderScreenState extends State<KasayaGonderScreen> with SingleTick
                           padding: EdgeInsets.symmetric(vertical: 24),
                           child: Center(child: CircularProgressIndicator()),
                         )
-                      else if (changes.isEmpty && creates.isEmpty)
+                      else if (ownChanges.isEmpty && ownCreates.isEmpty)
                         const Padding(
                           padding: EdgeInsets.symmetric(vertical: 24),
                           child: Center(
@@ -437,13 +468,13 @@ class _KasayaGonderScreenState extends State<KasayaGonderScreen> with SingleTick
                         ),
                         const SizedBox(height: 10),
                       ],
-                      if (creates.isNotEmpty) ...[
+                      if (ownCreates.isNotEmpty) ...[
                         const Padding(
                           padding: EdgeInsets.only(bottom: 6),
                           child: Text('Yeni Ürünler',
                               style: TextStyle(fontWeight: FontWeight.bold, color: AppColors.brown700, fontSize: 13)),
                         ),
-                        for (final create in creates)
+                        for (final create in ownCreates)
                           _PendingCreateCard(
                             create: create,
                             selected: _selectedCreateIds.contains(create.id),
@@ -458,11 +489,11 @@ class _KasayaGonderScreenState extends State<KasayaGonderScreen> with SingleTick
                           ),
                         const SizedBox(height: 12),
                       ],
-                      if (changes.isNotEmpty) ...[
+                      if (ownChanges.isNotEmpty) ...[
                         Padding(
                           padding: const EdgeInsets.only(bottom: 4),
                           child: Text(
-                            '${changes.length} bekleyen değişiklik',
+                            '${ownChanges.length} bekleyen değişiklik',
                             style: const TextStyle(color: AppColors.brown500, fontSize: 13),
                           ),
                         ),
@@ -486,15 +517,16 @@ class _KasayaGonderScreenState extends State<KasayaGonderScreen> with SingleTick
                               ],
                             ),
                           ),
-                          for (final c in group.value)
+                          for (final entry in _groupByBarcode(group.value).entries)
                             SwipeBounceDismiss(
-                              itemKey: ValueKey(c.id),
-                              onDismiss: () => _revoke(c),
+                              itemKey: ValueKey(entry.key),
+                              onDismiss: () => _revokeBarcode(entry.value),
                               builder: (triggerDismiss) => _PendingChangeCard(
-                                change: c,
-                                selected: _selectedIds.contains(c.id),
-                                conflicted: conflictedBarcodes.contains(c.barcode),
-                                onSelectChanged: (v) => _toggleSelect(c.id, v),
+                                barcode: entry.key,
+                                changes: entry.value,
+                                selected: entry.value.map((c) => c.id).every(_selectedIds.contains),
+                                conflicted: conflictedBarcodes.contains(entry.key),
+                                onSelectChanged: (v) => _toggleSelectBarcode(entry.value, v),
                                 onRevoke: triggerDismiss,
                               ),
                             ),
@@ -666,7 +698,7 @@ class _TeraziyeGonderTabState extends State<_TeraziyeGonderTab> {
       if (product == null) continue;
       final newName = st.nameController.text.trim();
       final newPrice = num.tryParse(st.priceController.text.trim().replaceAll(',', '.'));
-      if (newName.isNotEmpty && newName != product.stockname) {
+      if (newName.isNotEmpty && newName != product.stockname.trim()) {
         await _repo.stageChange(
             barcode: product.barcode, field: 'stockname', value: newName, listName: 'Terazi · ${list.name}');
       }
@@ -950,8 +982,15 @@ class _PendingCreateCard extends StatelessWidget {
   }
 }
 
+/// Every pending field for one product (all sharing [barcode]), shown as a
+/// single card -- one checkbox/revoke covers the whole product rather than
+/// each field having its own, since they were staged together and are sent
+/// or reverted together.
 class _PendingChangeCard extends StatelessWidget {
-  final PendingChange change;
+  final String barcode;
+  final List<PendingChange> changes;
+  /// True only when every field for this product is currently selected --
+  /// toggling flips them all together.
   final bool selected;
   /// True when another product_pending_changes row for this *same barcode*
   /// (any field) was staged by a different requester -- two people
@@ -963,7 +1002,8 @@ class _PendingChangeCard extends StatelessWidget {
   final VoidCallback onRevoke;
 
   const _PendingChangeCard({
-    required this.change,
+    required this.barcode,
+    required this.changes,
     required this.selected,
     required this.conflicted,
     required this.onSelectChanged,
@@ -972,7 +1012,8 @@ class _PendingChangeCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final alreadyApplied = _alreadyApplied(change);
+    final first = changes.first;
+    final anyAlreadyApplied = changes.any((c) => c.field != kDeleteField && _alreadyApplied(c));
     return Container(
       margin: const EdgeInsets.only(bottom: 8),
       padding: const EdgeInsets.all(14),
@@ -980,8 +1021,8 @@ class _PendingChangeCard extends StatelessWidget {
         color: conflicted ? AppColors.terracotta.withValues(alpha: 0.10) : AppColors.creamCard,
         borderRadius: BorderRadius.circular(AppRadius.box),
         border: Border.all(
-          color: conflicted || alreadyApplied || selected ? AppColors.terracotta : AppColors.creamBorder,
-          width: conflicted ? 2.5 : (alreadyApplied || selected ? 2 : 1),
+          color: conflicted || anyAlreadyApplied || selected ? AppColors.terracotta : AppColors.creamBorder,
+          width: conflicted ? 2.5 : (anyAlreadyApplied || selected ? 2 : 1),
         ),
       ),
       child: Row(
@@ -997,10 +1038,10 @@ class _PendingChangeCard extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  change.product?.stockname ?? change.barcode,
+                  first.product?.stockname ?? barcode,
                   style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: AppColors.brown900),
                 ),
-                Text(change.barcode, style: const TextStyle(fontSize: 13, color: AppColors.brown500)),
+                Text(barcode, style: const TextStyle(fontSize: 13, color: AppColors.brown500)),
                 Padding(
                   padding: const EdgeInsets.only(top: 2),
                   child: Text(
@@ -1009,57 +1050,60 @@ class _PendingChangeCard extends StatelessWidget {
                     // the source list (or "Ürün Ara" if staged straight
                     // from search) and exactly when, which the group header
                     // doesn't carry.
-                    '${change.sourceListName ?? 'Ürün Ara'} · ${_formatTime(change.createdAt)}',
+                    '${first.sourceListName ?? 'Ürün Ara'} · ${_formatTime(first.createdAt)}',
                     style: const TextStyle(fontSize: 11, color: AppColors.brown400, fontStyle: FontStyle.italic),
                   ),
                 ),
                 const SizedBox(height: 6),
-                if (change.field == kDeleteField)
-                  Row(
-                    children: [
-                      const Icon(Icons.delete_forever, size: 15, color: AppColors.terracotta),
-                      const SizedBox(width: 4),
-                      Text(
-                        'Bu ürün Digisoft\'tan silinecek',
-                        style: const TextStyle(
-                            fontSize: 12, fontWeight: FontWeight.bold, color: AppColors.terracotta),
-                      ),
-                    ],
-                  )
-                else
-                  RichText(
-                    text: TextSpan(
-                      style: const TextStyle(fontSize: 12, color: AppColors.brown500),
+                for (final change in changes) ...[
+                  if (change.field == kDeleteField)
+                    Row(
                       children: [
-                        TextSpan(
-                          text: '${_fieldLabel(change.field)}: ${_oldValueDisplay(change)}  →  ',
-                        ),
-                        TextSpan(
-                          text: _formatValue(change.field, change.newValue),
-                          style: const TextStyle(fontWeight: FontWeight.bold, color: AppColors.terracotta),
-                        ),
-                      ],
-                    ),
-                  ),
-                if (alreadyApplied && change.field != kDeleteField)
-                  Padding(
-                    padding: const EdgeInsets.only(top: 6),
-                    child: Row(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        const Icon(Icons.error_outline, size: 14, color: AppColors.terracotta),
+                        const Icon(Icons.delete_forever, size: 15, color: AppColors.terracotta),
                         const SizedBox(width: 4),
-                        Expanded(
-                          child: Text(
-                            'Kasadaki ${_fieldLabel(change.field).toLowerCase()} zaten güncellenmiş: '
-                            '${_formatValue(change.field, _currentValueFor(change))} -- muhtemelen zaten gönderilmiş.',
-                            style: const TextStyle(
-                                fontSize: 11, color: AppColors.terracotta, fontWeight: FontWeight.w600),
-                          ),
+                        Text(
+                          'Bu ürün Digisoft\'tan silinecek',
+                          style: const TextStyle(
+                              fontSize: 12, fontWeight: FontWeight.bold, color: AppColors.terracotta),
                         ),
                       ],
+                    )
+                  else ...[
+                    RichText(
+                      text: TextSpan(
+                        style: const TextStyle(fontSize: 12, color: AppColors.brown500),
+                        children: [
+                          TextSpan(
+                            text: '${_fieldLabel(change.field)}: ${_oldValueDisplay(change)}  →  ',
+                          ),
+                          TextSpan(
+                            text: _formatValue(change.field, change.newValue),
+                            style: const TextStyle(fontWeight: FontWeight.bold, color: AppColors.terracotta),
+                          ),
+                        ],
+                      ),
                     ),
-                  ),
+                    if (_alreadyApplied(change))
+                      Padding(
+                        padding: const EdgeInsets.only(top: 2, bottom: 2),
+                        child: Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            const Icon(Icons.error_outline, size: 14, color: AppColors.terracotta),
+                            const SizedBox(width: 4),
+                            Expanded(
+                              child: Text(
+                                'Kasadaki ${_fieldLabel(change.field).toLowerCase()} zaten güncellenmiş: '
+                                '${_formatValue(change.field, _currentValueFor(change))} -- muhtemelen zaten gönderilmiş.',
+                                style: const TextStyle(
+                                    fontSize: 11, color: AppColors.terracotta, fontWeight: FontWeight.w600),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                  ],
+                ],
                 if (conflicted)
                   Padding(
                     padding: const EdgeInsets.only(top: 6),

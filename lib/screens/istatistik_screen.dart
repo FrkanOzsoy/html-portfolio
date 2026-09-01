@@ -9,9 +9,10 @@ import '../kasa_repo.dart';
 import '../models.dart';
 import '../platform_util.dart';
 import '../theme.dart';
-import '../widgets/add_to_list_button.dart';
-import '../widgets/edit_product_button.dart';
+import '../widgets/product_peek_sheet.dart';
+import '../widgets/product_sales_table.dart';
 import '../widgets/sortable_table.dart';
+import 'kasap_screen.dart';
 
 // ===========================================================================
 // Mobile: İstatistik is behind a one-time PIN. Once entered it stays unlocked
@@ -112,6 +113,10 @@ class _MobileIstatistikGateState extends State<MobileIstatistikGate> {
 /// lib/kasa_repo.dart). Six sections, each with fully sortable tables:
 ///   Son İşlemler · Günlük Özet · İptaller · Fiyat Uyuşmazlığı ·
 ///   Z Raporları · Ürün Satışları
+/// Plus a 7th, "Kasap" (butcher stats), shown to everyone on desktop and
+/// only to two specific mobile staff -- see _IstatistikScreenState below,
+/// which resolves that before the TabController (fixed-length once built)
+/// is ever constructed.
 class IstatistikScreen extends StatefulWidget {
   const IstatistikScreen({super.key});
 
@@ -119,9 +124,45 @@ class IstatistikScreen extends StatefulWidget {
   State<IstatistikScreen> createState() => _IstatistikScreenState();
 }
 
-class _IstatistikScreenState extends State<IstatistikScreen> with SingleTickerProviderStateMixin {
+class _IstatistikScreenState extends State<IstatistikScreen> {
+  // Desktop: always true, set synchronously so there's no loading flash.
+  // Mobile: only Furkan/Ahmet -- resolved async off the device's own staff
+  // name, same pattern as MobileIstatistikGate's PIN check above.
+  bool? _showKasap;
+
+  @override
+  void initState() {
+    super.initState();
+    if (isDesktopPlatform) {
+      _showKasap = true;
+    } else {
+      DataRepo().getStaffName().then((name) {
+        final n = name?.trim().toLowerCase();
+        if (mounted) setState(() => _showKasap = n == 'furkan' || n == 'ahmet');
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_showKasap == null) {
+      return const Center(child: CircularProgressIndicator());
+    }
+    return _IstatistikBody(showKasap: _showKasap!);
+  }
+}
+
+class _IstatistikBody extends StatefulWidget {
+  final bool showKasap;
+  const _IstatistikBody({required this.showKasap});
+
+  @override
+  State<_IstatistikBody> createState() => _IstatistikBodyState();
+}
+
+class _IstatistikBodyState extends State<_IstatistikBody> with SingleTickerProviderStateMixin {
   final _repo = KasaRepo();
-  late final TabController _tab = TabController(length: 6, vsync: this);
+  late final TabController _tab = TabController(length: widget.showKasap ? 7 : 6, vsync: this);
 
   int _openMismatches = 0;
   StreamSubscription? _mismatchSub;
@@ -198,6 +239,7 @@ class _IstatistikScreenState extends State<IstatistikScreen> with SingleTickerPr
                           ),
                           const Tab(text: 'Z Raporları'),
                           const Tab(text: 'Ürün Satışları'),
+                          if (widget.showKasap) const Tab(text: 'Kasap'),
                         ],
                       ),
                     ),
@@ -228,6 +270,7 @@ class _IstatistikScreenState extends State<IstatistikScreen> with SingleTickerPr
                 _MismatchSection(repo: _repo),
                 _ZReportsSection(repo: _repo),
                 _UrunSatislariSection(repo: _repo),
+                if (widget.showKasap) KasapContent(repo: _repo),
               ],
             ),
           ),
@@ -353,41 +396,6 @@ class _FreshnessChip extends StatelessWidget {
 }
 
 Padding _pad(Widget child) => Padding(padding: const EdgeInsets.fromLTRB(16, 14, 16, 24), child: child);
-
-/// Shared: open a product in a small sheet with the standard edit / add-to-list
-/// actions (used from Ölü Stok and the top-products table).
-Future<void> _peekProduct(BuildContext context, String barcode) async {
-  final repo = DataRepo();
-  final product = await repo.lookupBarcode(barcode);
-  if (!context.mounted) return;
-  showModalBottomSheet<void>(
-    context: context,
-    showDragHandle: true,
-    builder: (context) => Padding(
-      padding: const EdgeInsets.fromLTRB(20, 4, 20, 28),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(product?.stockname ?? 'Ürün bulunamadı',
-              style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 17, color: AppColors.brown900)),
-          const SizedBox(height: 4),
-          Text('$barcode${product?.price != null ? '  ·  ${formatPrice(product!.price)}' : ''}',
-              style: const TextStyle(color: AppColors.brown500, fontSize: 13)),
-          const SizedBox(height: 16),
-          if (product != null)
-            Row(
-              children: [
-                Expanded(child: EditProductButton(product: product)),
-                const SizedBox(width: 10),
-                Expanded(child: AddToListButton(product: product)),
-              ],
-            ),
-        ],
-      ),
-    ),
-  );
-}
 
 // ---- receipt notes (staff, bound to belge_id -- shared by Son İşlemler,
 // İptaller and the detail sheet) -------------------------------------------
@@ -1239,7 +1247,7 @@ class _ProductSalesTable extends StatelessWidget {
       initialSortColumn: 2, // revenue
       initialAscending: false,
       emptyText: 'Satış kaydı yok.',
-      onRowTap: (s) => _peekProduct(context, s.barcode),
+      onRowTap: (s) => peekProduct(context, s.barcode),
       columns: [
         SortColumn(
           label: 'Ürün',
@@ -1485,7 +1493,7 @@ class _MismatchSectionState extends State<_MismatchSection> {
       initialSortColumn: 0,
       initialAscending: false,
       emptyText: 'Açık fiyat uyuşmazlığı yok. 👍',
-      onRowTap: (m) => _peekProduct(context, m.barcode),
+      onRowTap: (m) => peekProduct(context, m.barcode),
       rowTint: (m) => m.resolved ? AppColors.brown100.withValues(alpha: 0.4) : null,
       columns: [
         SortColumn(
@@ -2119,114 +2127,13 @@ class _UrunSatislariSectionState extends State<_UrunSatislariSection> {
                 const SizedBox(height: 10),
 
                 Expanded(
-                  child: SortableTable<KasaProductSalesReport>(
-                  rows: rows,
-                  pageSize: appSettings.tablePageSize,
-                  initialSortColumn: 4, // Ciro (revenue) desc
-                  initialAscending: false,
-                  emptyText: 'Seçili filtrelere uyan ürün kaydı bulunamadı.',
-                  onRowTap: (d) => _peekProduct(context, d.barcode),
-                  columns: [
-                    SortColumn(
-                      label: 'Ürün',
-                      flex: 3,
-                      sortKey: (d) => d.stockname.toLowerCase(),
-                      cell: (d) => Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            d.stockname.isEmpty ? '-' : d.stockname,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(fontWeight: FontWeight.w600),
-                          ),
-                          Text(d.barcode,
-                              style: const TextStyle(
-                                  fontSize: 10.5, color: AppColors.brown400)),
-                        ],
-                      ),
-                    ),
-                    SortColumn(
-                      label: 'Fiyat',
-                      width: 88,
-                      numeric: true,
-                      sortKey: (d) => d.price ?? 0,
-                      cell: (d) => Text(formatPrice(d.price)),
-                    ),
-                    SortColumn(
-                      label: 'Reyon',
-                      width: 90,
-                      sortKey: (d) => (d.depno ?? '').toLowerCase(),
-                      cell: (d) => Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Text(
-                            d.depno ?? '-',
-                            style: const TextStyle(
-                                fontSize: 12, color: AppColors.brown700),
-                          ),
-                          if (d.kdvRate != null)
-                            Text(
-                              '%${d.kdvRate}',
-                              style: const TextStyle(
-                                  fontSize: 10, color: AppColors.brown400),
-                            ),
-                        ],
-                      ),
-                    ),
-                    SortColumn(
-                      label: 'Satılan Adet',
-                      width: 94,
-                      numeric: true,
-                      sortKey: (d) => d.qty,
-                      cell: (d) => Text(
-                        _qty(d.qty),
-                        style: TextStyle(
-                          fontWeight: d.qty > 0 ? FontWeight.w700 : FontWeight.normal,
-                          color: d.qty > 0 ? AppColors.brown900 : AppColors.brown400,
-                        ),
-                      ),
-                    ),
-                    SortColumn(
-                      label: 'Ciro',
-                      width: 100,
-                      numeric: true,
-                      sortKey: (d) => d.revenue,
-                      cell: (d) => Text(
-                        formatPrice(d.revenue),
-                        style: TextStyle(
-                          fontWeight: d.revenue > 0 ? FontWeight.w700 : FontWeight.normal,
-                          color: d.revenue > 0 ? AppColors.terracotta : AppColors.brown400,
-                        ),
-                      ),
-                    ),
-                    SortColumn(
-                      label: 'İşlem',
-                      width: 68,
-                      numeric: true,
-                      sortKey: (d) => d.lineCount,
-                      cell: (d) => Text(
-                        '${d.lineCount}',
-                        style: TextStyle(
-                          color: d.lineCount > 0 ? AppColors.brown700 : AppColors.brown400,
-                        ),
-                      ),
-                    ),
-                    SortColumn(
-                      label: 'Son Satış',
-                      width: 124,
-                      numeric: true,
-                      sortKey: (d) => d.lastSoldAt?.millisecondsSinceEpoch ?? 0,
-                      cell: (d) => Text(
-                        d.lastSoldAt == null
-                            ? 'hiç'
-                            : '${_dmy(d.lastSoldAt!)}${d.daysSince != null ? ' (${d.daysSince} g)' : ''}',
-                        style: const TextStyle(fontSize: 11.5, color: AppColors.brown600),
-                      ),
-                    ),
-                  ],
-                ),
+                  child: ProductSalesReportTable(
+                    rows: rows,
+                    pageSize: appSettings.tablePageSize,
+                    from: _from,
+                    to: _to,
+                    repo: widget.repo,
+                  ),
                 ),
               ],
             ),

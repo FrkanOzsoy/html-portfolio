@@ -301,6 +301,11 @@ class KasaRepo {
     String? depno,
     bool includeUnsold = true,
     int limit = 1000,
+    // Scopes the report to just these barcodes (e.g. Kasap's SARKUTERI
+    // PLU 50-100 set) -- explicitly set whenever non-null, even an empty
+    // list, so a barcode set that resolved empty filters to zero rows
+    // instead of silently falling back to "no filter" (the whole catalog).
+    List<String>? barcodes,
   }) async {
     final params = <String, dynamic>{
       'p_from': _dateOnly(from),
@@ -311,12 +316,64 @@ class KasaRepo {
     if (depno != null && depno.isNotEmpty) {
       params['p_depno'] = depno;
     }
+    if (barcodes != null) {
+      params['p_barcodes'] = barcodes;
+    }
     final rows = await _client
         .rpc('kasa_product_sales_report', params: params)
         .timeout(const Duration(seconds: 20));
     return (rows as List)
         .map((r) => KasaProductSalesReport.fromJson(r as Map<String, dynamic>))
         .toList();
+  }
+
+  /// Sold vs. iptal breakdown for one product over a date range -- the
+  /// drill-down shown when a Ürün Satışları / Kasap row is tapped.
+  Future<SalesVoidBreakdown> getSalesVoidBreakdown({
+    required String barcode,
+    required DateTime from,
+    required DateTime to,
+  }) async {
+    final rows = await _client.rpc('kasa_product_sales_void_breakdown', params: {
+      'p_barcode': barcode,
+      'p_from': _dateOnly(from),
+      'p_to': _dateOnly(to),
+    }).timeout(const Duration(seconds: 10));
+    final row = (rows as List).first as Map<String, dynamic>;
+    return SalesVoidBreakdown.fromJson(row);
+  }
+
+  /// Day-by-day qty/revenue trend for a barcode set (Kasap's "Günlük
+  /// Trend") -- a plain client-side grouping of kasa_product_sales_daily
+  /// rows, not an RPC, since it needs no products join.
+  Future<List<KasaDailyTrendPoint>> getProductSalesDailyTrend({
+    required DateTime from,
+    required DateTime to,
+    required List<String> barcodes,
+  }) async {
+    if (barcodes.isEmpty) return [];
+    final rows = await _client
+        .from('kasa_product_sales_daily')
+        .select('sale_date, qty, revenue')
+        .inFilter('barcode', barcodes)
+        .gte('sale_date', _dateOnly(from))
+        .lte('sale_date', _dateOnly(to))
+        .timeout(const Duration(seconds: 15));
+    final byDate = <String, ({num qty, num revenue})>{};
+    for (final r in rows) {
+      final date = r['sale_date'] as String;
+      final prev = byDate[date] ?? (qty: 0, revenue: 0);
+      byDate[date] = (
+        qty: prev.qty + ((r['qty'] as num?) ?? 0),
+        revenue: prev.revenue + ((r['revenue'] as num?) ?? 0),
+      );
+    }
+    final points = [
+      for (final e in byDate.entries)
+        KasaDailyTrendPoint(date: DateTime.parse(e.key), qty: e.value.qty, revenue: e.value.revenue),
+    ];
+    points.sort((a, b) => a.date.compareTo(b.date));
+    return points;
   }
 
   /// Distinct non-empty department codes (depno) from products table.

@@ -84,7 +84,7 @@ class _QuickEditDialogState extends State<_QuickEditDialog> {
         await _repo.stageChange(barcode: widget.product.barcode, field: 'price', value: text);
       }
       final newName = _nameController.text.trim();
-      if (newName.isNotEmpty && newName != widget.product.stockname) {
+      if (newName.isNotEmpty && newName != widget.product.stockname.trim()) {
         await _repo.stageChange(barcode: widget.product.barcode, field: 'stockname', value: newName);
       }
       if (mounted) Navigator.of(context).pop(true);
