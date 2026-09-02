@@ -1,7 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'package:connectivity_plus/connectivity_plus.dart';
-import 'package:flutter/foundation.dart';
+import 'package:flutter/widgets.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'local_db.dart';
@@ -24,7 +24,7 @@ import 'models.dart';
 ///   initial pull and every subsequent live update),
 /// - a `pending_ops` queue, flushed in order, for local writes made while
 ///   offline (or that raced a flaky connection).
-class SyncEngine {
+class SyncEngine with WidgetsBindingObserver {
   SyncEngine._();
   static final SyncEngine instance = SyncEngine._();
 
@@ -45,6 +45,10 @@ class SyncEngine {
   Future<void> start() async {
     if (_started) return;
     _started = true;
+
+    await _loadLastForeground();
+    unawaited(_markForeground());
+    WidgetsBinding.instance.addObserver(this);
 
     unawaited(pullProducts());
     unawaited(flushPendingOps());
@@ -109,7 +113,10 @@ class SyncEngine {
     // Self-healing net in case a realtime event is ever missed (dropped
     // connection mid-change, etc.) -- infrequent since the channel above
     // handles the normal case, so a full re-download here is cheap enough.
-    _productsRefreshTimer = Timer.periodic(const Duration(minutes: 5), (_) => unawaited(pullProducts()));
+    _productsRefreshTimer = Timer.periodic(const Duration(minutes: 5), (_) {
+      if (!_isActive) return;
+      unawaited(pullProducts());
+    });
 
     // flushPendingOps is otherwise only triggered by an explicit local write
     // or a connectivity-regained event -- if a single flush attempt fails
@@ -134,6 +141,7 @@ class SyncEngine {
 
   Future<void> stop() async {
     _started = false;
+    WidgetsBinding.instance.removeObserver(this);
     await _connSub?.cancel();
     await _listsSub?.cancel();
     await _itemsSub?.cancel();
@@ -168,7 +176,48 @@ class SyncEngine {
   // catches a deletion missed while offline) is only worth its cost
   // occasionally; an incremental "what changed since last time" pull
   // covers everything else far more cheaply and can run every cycle.
-  static const _fullSyncInterval = Duration(hours: 6);
+  // Was 6 hours; that made every device re-download the entire products
+  // table (~1MB JSON for ~5.8k rows as of 2026-09) 4x/day regardless of
+  // whether anything changed, which was most of this project's egress at
+  // only 5 active devices. 2 days keeps the same self-healing property at
+  // a fraction of the cost -- a missed realtime event just takes longer to
+  // self-correct, it isn't lost.
+  static const _fullSyncInterval = Duration(days: 2);
+
+  // A device that hasn't been brought to the foreground in this long stops
+  // running its periodic background pull (see the timer in [start]) until
+  // it's actively opened again -- an idle phone or a Windows install left
+  // open and forgotten about shouldn't keep polling Supabase every 5
+  // minutes indefinitely. Foreground/first-start always pulls immediately
+  // regardless of this, so a device catches back up the moment it's used.
+  static const _inactivityCutoff = Duration(days: 1);
+  static const _lastForegroundKey = 'last_foreground_at';
+  DateTime _lastForegroundAt = DateTime.now().toUtc();
+
+  bool get _isActive => DateTime.now().toUtc().difference(_lastForegroundAt) <= _inactivityCutoff;
+
+  Future<void> _loadLastForeground() async {
+    final prefs = await SharedPreferences.getInstance();
+    final raw = prefs.getString(_lastForegroundKey);
+    final parsed = raw == null ? null : DateTime.tryParse(raw);
+    _lastForegroundAt = parsed ?? DateTime.now().toUtc();
+  }
+
+  Future<void> _markForeground() async {
+    _lastForegroundAt = DateTime.now().toUtc();
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_lastForegroundKey, _lastForegroundAt.toIso8601String());
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state != AppLifecycleState.resumed) return;
+    final wasInactive = !_isActive;
+    unawaited(_markForeground());
+    // Catch up right away if this device had gone quiet long enough that
+    // the periodic timer below was skipping its ticks.
+    if (wasInactive) unawaited(pullProducts());
+  }
 
   /// [full] forces a complete re-download + replace regardless of when the
   /// last one ran -- otherwise this pulls incrementally (only rows changed
