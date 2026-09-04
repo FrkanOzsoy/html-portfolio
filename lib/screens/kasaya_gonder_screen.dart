@@ -25,25 +25,51 @@ String _fieldLabel(String field) => switch (field) {
       'stockunit' => 'Birim',
       'depno' => 'Grup',
       'barcode' => 'Barkod',
+      'kasadepid' => 'KDV',
       kDeleteField => 'Ürünü Sil',
       _ => field,
     };
 
+/// Formats as `%rate (department name)` -- kasadepid on its own (a bare
+/// integer like "4") means nothing to staff; this is what they actually
+/// recognize
+/// from Digisoft. Falls back to the raw id if the department list hasn't
+/// loaded yet or genuinely doesn't contain it (stale id, list still
+/// loading) rather than showing nothing.
+String _kdvDisplay(String? kasadepidStr, List<KdvDepartment> departments) {
+  if (kasadepidStr == null) return '-';
+  final id = int.tryParse(kasadepidStr);
+  if (id == null) return kasadepidStr;
+  for (final d in departments) {
+    if (d.kasadepid == id) return '%${d.kdvRate} (${d.name})';
+  }
+  return kasadepidStr;
+}
+
 /// The value being replaced, for the "old → new" line on a pending card. For
-/// a barcode change the "old" is the staged row's own barcode.
-String _oldValueDisplay(PendingChange c) => switch (c.field) {
+/// a barcode change the "old" is the staged row's own barcode. For KDV, the
+/// product's own kdvRate (synced from Digisoft) is matched back to whichever
+/// department currently has that rate -- kasadepid itself isn't mirrored
+/// onto the local Product, only the resulting rate is.
+String _oldValueDisplay(PendingChange c, List<KdvDepartment> departments) => switch (c.field) {
       'price' => formatPrice(c.product?.price),
       'barcode' => c.barcode,
+      'kasadepid' => () {
+          final dept = matchKdvDepartmentByRate(c.product?.kdvRate, departments);
+          return dept == null ? '-' : '%${dept.kdvRate} (${dept.name})';
+        }(),
       _ => c.product?.stockname ?? '-',
     };
 
-String _formatValue(String field, String? value) =>
-    field == 'price' ? formatPrice(value == null ? null : num.tryParse(value)) : (value ?? '-');
+String _formatValue(String field, String? value, List<KdvDepartment> departments) {
+  if (field == 'price') return formatPrice(value == null ? null : num.tryParse(value));
+  if (field == 'kasadepid') return _kdvDisplay(value, departments);
+  return value ?? '-';
+}
 
 /// The field's actual current value on the (locally cached, but
 /// realtime-synced) product row -- null for a field this app doesn't mirror
-/// onto [Product] locally (e.g. 'kasadepid', which only exists on the
-/// till-PC side), meaning no double-check is possible for it.
+/// onto [Product] locally, meaning no double-check is possible for it.
 String? _currentValueFor(PendingChange c) => switch (c.field) {
       'price' => c.product?.price?.toString(),
       'stockname' => c.product?.stockname,
@@ -57,11 +83,19 @@ String? _currentValueFor(PendingChange c) => switch (c.field) {
 /// another device (or another staff member's session) and this staged row
 /// itself just hasn't been cleared yet, rather than because it still
 /// genuinely needs sending. See _PendingChangeCard's warning below.
-bool _alreadyApplied(PendingChange c) {
+bool _alreadyApplied(PendingChange c, List<KdvDepartment> departments) {
   if (c.product == null) return false;
   if (c.field == 'price') {
     final staged = num.tryParse(c.newValue.replaceAll(',', '.'));
     return staged != null && c.product!.price == staged;
+  }
+  if (c.field == 'kasadepid') {
+    final stagedId = int.tryParse(c.newValue);
+    if (stagedId == null) return false;
+    for (final d in departments) {
+      if (d.kasadepid == stagedId) return d.kdvRate == c.product!.kdvRate;
+    }
+    return false;
   }
   final current = _currentValueFor(c);
   return current != null && current == c.newValue;
@@ -127,6 +161,10 @@ class _KasayaGonderScreenState extends State<KasayaGonderScreen> with SingleTick
   // user" just means "matches this device's own self-reported name". Used
   // to sort that group to the bottom, separate from everyone else's.
   String? _currentStaffName;
+  // Resolves kasadepid -> "%rate (name)" everywhere a pending/sent change
+  // touches KDV -- see _kdvDisplay. Empty until loaded, in which case those
+  // displays just fall back to the raw id rather than blocking the screen.
+  List<KdvDepartment> _departments = [];
 
   @override
   void initState() {
@@ -134,6 +172,9 @@ class _KasayaGonderScreenState extends State<KasayaGonderScreen> with SingleTick
     _loadHistory();
     _repo.getStaffName().then((name) {
       if (mounted) setState(() => _currentStaffName = name);
+    });
+    _repo.getKdvDepartments().then((departments) {
+      if (mounted) setState(() => _departments = departments);
     });
   }
 
@@ -528,13 +569,14 @@ class _KasayaGonderScreenState extends State<KasayaGonderScreen> with SingleTick
                                 conflicted: conflictedBarcodes.contains(entry.key),
                                 onSelectChanged: (v) => _toggleSelectBarcode(entry.value, v),
                                 onRevoke: triggerDismiss,
+                                departments: _departments,
                               ),
                             ),
                         ],
                       ],
                       const SizedBox(height: 24),
                       const Divider(),
-                      _SentHistorySection(loading: _historyLoading, history: _history),
+                      _SentHistorySection(loading: _historyLoading, history: _history, departments: _departments),
                     ],
                   );
                 },
@@ -1000,6 +1042,7 @@ class _PendingChangeCard extends StatelessWidget {
   final bool conflicted;
   final ValueChanged<bool> onSelectChanged;
   final VoidCallback onRevoke;
+  final List<KdvDepartment> departments;
 
   const _PendingChangeCard({
     required this.barcode,
@@ -1008,12 +1051,13 @@ class _PendingChangeCard extends StatelessWidget {
     required this.conflicted,
     required this.onSelectChanged,
     required this.onRevoke,
+    required this.departments,
   });
 
   @override
   Widget build(BuildContext context) {
     final first = changes.first;
-    final anyAlreadyApplied = changes.any((c) => c.field != kDeleteField && _alreadyApplied(c));
+    final anyAlreadyApplied = changes.any((c) => c.field != kDeleteField && _alreadyApplied(c, departments));
     return Container(
       margin: const EdgeInsets.only(bottom: 8),
       padding: const EdgeInsets.all(14),
@@ -1074,16 +1118,16 @@ class _PendingChangeCard extends StatelessWidget {
                         style: const TextStyle(fontSize: 12, color: AppColors.brown500),
                         children: [
                           TextSpan(
-                            text: '${_fieldLabel(change.field)}: ${_oldValueDisplay(change)}  →  ',
+                            text: '${_fieldLabel(change.field)}: ${_oldValueDisplay(change, departments)}  →  ',
                           ),
                           TextSpan(
-                            text: _formatValue(change.field, change.newValue),
+                            text: _formatValue(change.field, change.newValue, departments),
                             style: const TextStyle(fontWeight: FontWeight.bold, color: AppColors.terracotta),
                           ),
                         ],
                       ),
                     ),
-                    if (_alreadyApplied(change))
+                    if (_alreadyApplied(change, departments))
                       Padding(
                         padding: const EdgeInsets.only(top: 2, bottom: 2),
                         child: Row(
@@ -1094,7 +1138,7 @@ class _PendingChangeCard extends StatelessWidget {
                             Expanded(
                               child: Text(
                                 'Kasadaki ${_fieldLabel(change.field).toLowerCase()} zaten güncellenmiş: '
-                                '${_formatValue(change.field, _currentValueFor(change))} -- muhtemelen zaten gönderilmiş.',
+                                '${change.field == 'kasadepid' ? _oldValueDisplay(change, departments) : _formatValue(change.field, _currentValueFor(change), departments)} -- muhtemelen zaten gönderilmiş.',
                                 style: const TextStyle(
                                     fontSize: 11, color: AppColors.terracotta, fontWeight: FontWeight.w600),
                               ),
@@ -1143,8 +1187,9 @@ class _PendingChangeCard extends StatelessWidget {
 class _SentHistorySection extends StatefulWidget {
   final bool loading;
   final List<SentChangeRecord> history;
+  final List<KdvDepartment> departments;
 
-  const _SentHistorySection({required this.loading, required this.history});
+  const _SentHistorySection({required this.loading, required this.history, required this.departments});
 
   @override
   State<_SentHistorySection> createState() => _SentHistorySectionState();
@@ -1205,7 +1250,8 @@ class _SentHistorySectionState extends State<_SentHistorySection> {
               child: Text('Henüz gönderim yok.', style: TextStyle(color: AppColors.brown500, fontSize: 13)),
             )
           else
-            for (final entry in groups.entries) _SentHistoryGroup(groupKey: entry.key, records: entry.value),
+            for (final entry in groups.entries)
+              _SentHistoryGroup(groupKey: entry.key, records: entry.value, departments: widget.departments),
         ],
       ],
     );
@@ -1215,8 +1261,9 @@ class _SentHistorySectionState extends State<_SentHistorySection> {
 class _SentHistoryGroup extends StatefulWidget {
   final String groupKey;
   final List<SentChangeRecord> records;
+  final List<KdvDepartment> departments;
 
-  const _SentHistoryGroup({required this.groupKey, required this.records});
+  const _SentHistoryGroup({required this.groupKey, required this.records, required this.departments});
 
   @override
   State<_SentHistoryGroup> createState() => _SentHistoryGroupState();
@@ -1267,7 +1314,9 @@ class _SentHistoryGroupState extends State<_SentHistoryGroup> {
               padding: const EdgeInsets.fromLTRB(12, 0, 12, 10),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
-                children: [for (final r in widget.records) _SentHistoryRow(record: r)],
+                children: [
+                  for (final r in widget.records) _SentHistoryRow(record: r, departments: widget.departments),
+                ],
               ),
             ),
         ],
@@ -1278,7 +1327,8 @@ class _SentHistoryGroupState extends State<_SentHistoryGroup> {
 
 class _SentHistoryRow extends StatelessWidget {
   final SentChangeRecord record;
-  const _SentHistoryRow({required this.record});
+  final List<KdvDepartment> departments;
+  const _SentHistoryRow({required this.record, required this.departments});
 
   @override
   Widget build(BuildContext context) {
@@ -1303,9 +1353,11 @@ class _SentHistoryRow extends StatelessWidget {
                   text: TextSpan(
                     style: const TextStyle(fontSize: 12, color: AppColors.brown500),
                     children: [
-                      TextSpan(text: '${_fieldLabel(record.field)}: ${_formatValue(record.field, record.oldValue)}  →  '),
                       TextSpan(
-                        text: _formatValue(record.field, record.newValue),
+                          text:
+                              '${_fieldLabel(record.field)}: ${_formatValue(record.field, record.oldValue, departments)}  →  '),
+                      TextSpan(
+                        text: _formatValue(record.field, record.newValue, departments),
                         style: const TextStyle(fontWeight: FontWeight.bold, color: AppColors.terracotta),
                       ),
                     ],

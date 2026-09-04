@@ -999,6 +999,41 @@ class DataRepo {
           ),
       ]..sort((a, b) => b.at.compareTo(a.at));
 
+      // The products(stockname) join above resolves by the request's own
+      // `barcode` column -- for an already-successful *barcode* change,
+      // that's the OLD barcode, which no longer matches any row once the
+      // change went through, so the join silently comes back null and the
+      // history list fell back to showing the raw barcode instead of a
+      // name. Local lookup (fast, no network) covers both that case (try
+      // the new barcode too) and any other reason the join might have
+      // missed (e.g. this device's realtime feed hasn't caught up yet).
+      final missing = records.where((r) => r.stockname == null).toList();
+      if (missing.isNotEmpty) {
+        final candidates = <String>{
+          for (final r in missing) r.barcode,
+          for (final r in missing)
+            if (r.field == 'barcode') r.newValue,
+        };
+        final found = await _localDb.lookupProductsLocal(candidates.toList());
+        for (var i = 0; i < records.length; i++) {
+          final r = records[i];
+          if (r.stockname != null) continue;
+          final resolved = found[r.barcode] ?? (r.field == 'barcode' ? found[r.newValue] : null);
+          if (resolved == null) continue;
+          records[i] = SentChangeRecord(
+            barcode: r.barcode,
+            stockname: resolved.stockname,
+            field: r.field,
+            newValue: r.newValue,
+            oldValue: r.oldValue,
+            status: r.status,
+            errorMessage: r.errorMessage,
+            requestedBy: r.requestedBy,
+            at: r.at,
+          );
+        }
+      }
+
       return records.take(limit).toList();
     } catch (_) {
       return [];
