@@ -322,6 +322,16 @@ class KasaRepo {
   Future<void> setMismatchResolved(int id, bool resolved) =>
       _client.from('kasa_price_mismatches').update({'resolved': resolved}).eq('id', id);
 
+  /// "Çözüldü" on a grouped mismatch row hard-deletes every mismatch on
+  /// record for that barcode (not just the one shown), since the same
+  /// product can have several -- one per sale it happened on -- and staff
+  /// mean "this product is fixed now", not "this one specific sale is
+  /// fixed". Deletes both resolved and unresolved rows for the barcode so
+  /// the "Çözülenleri de göster" list doesn't keep old entries around for a
+  /// product that's already been fully cleared.
+  Future<void> deleteMismatchesForBarcode(String barcode) =>
+      _client.from('kasa_price_mismatches').delete().eq('barcode', barcode);
+
   // ---- Z Raporları -----------------------------------------------------
 
   /// Ordered by `id` (monotonic) not `z_no` -- the register's Z counter can

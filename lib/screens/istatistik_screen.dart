@@ -2164,31 +2164,32 @@ class _MismatchSectionState extends State<_MismatchSection> {
   }
 
   Widget _mismatchTable(List<KasaPriceMismatch> rows) {
-    return SortableTable<KasaPriceMismatch>(
-      rows: rows,
+    final groups = _groupByBarcode(rows);
+    return SortableTable<_MismatchGroup>(
+      rows: groups,
       initialSortColumn: 0,
       initialAscending: false,
       emptyText: 'Açık fiyat uyuşmazlığı yok. 👍',
-      onRowTap: (m) => peekProduct(context, m.barcode),
-      rowTint: (m) => m.resolved ? AppColors.brown100.withValues(alpha: 0.4) : null,
+      onRowTap: (g) => peekProduct(context, g.barcode),
+      rowTint: (g) => g.allResolved ? AppColors.brown100.withValues(alpha: 0.4) : null,
       columns: [
         SortColumn(
           label: 'Zaman',
           width: 132,
-          sortKey: (m) => m.soldAt.millisecondsSinceEpoch,
-          cell: (m) => Text('${_dm(m.soldAt)}  ${_hm(m.soldAt)}',
+          sortKey: (g) => g.latest.soldAt.millisecondsSinceEpoch,
+          cell: (g) => Text('${_dm(g.latest.soldAt)}  ${_hm(g.latest.soldAt)}',
               style: const TextStyle(fontSize: 12, color: AppColors.brown600)),
         ),
         SortColumn(
           label: 'Ürün',
           flex: 3,
-          sortKey: (m) => (m.name ?? m.barcode).toLowerCase(),
-          cell: (m) => Column(
+          sortKey: (g) => (g.name ?? g.barcode).toLowerCase(),
+          cell: (g) => Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text(m.name ?? m.barcode, maxLines: 1, overflow: TextOverflow.ellipsis,
+              Text(g.name ?? g.barcode, maxLines: 1, overflow: TextOverflow.ellipsis,
                   style: const TextStyle(fontWeight: FontWeight.w600)),
-              Text(m.barcode, style: const TextStyle(fontSize: 10.5, color: AppColors.brown400)),
+              Text(g.barcode, style: const TextStyle(fontSize: 10.5, color: AppColors.brown400)),
             ],
           ),
         ),
@@ -2196,57 +2197,89 @@ class _MismatchSectionState extends State<_MismatchSection> {
           label: 'Kasada',
           width: 92,
           numeric: true,
-          sortKey: (m) => m.tillPrice,
-          cell: (m) => Text(formatPrice(m.tillPrice), style: const TextStyle(fontWeight: FontWeight.w700)),
+          sortKey: (g) => g.latest.tillPrice,
+          cell: (g) => Text(formatPrice(g.latest.tillPrice), style: const TextStyle(fontWeight: FontWeight.w700)),
         ),
         SortColumn(
           label: 'Katalog',
           width: 92,
           numeric: true,
-          sortKey: (m) => m.catalogPrice,
-          cell: (m) => Text(formatPrice(m.catalogPrice), style: const TextStyle(color: AppColors.brown500)),
+          sortKey: (g) => g.latest.catalogPrice,
+          cell: (g) => Text(formatPrice(g.latest.catalogPrice), style: const TextStyle(color: AppColors.brown500)),
         ),
         SortColumn(
           label: 'Fark',
           width: 92,
           numeric: true,
-          sortKey: (m) => m.diff,
-          cell: (m) => Text(
-            '${m.diff > 0 ? '+' : ''}${formatPrice(m.diff)}',
+          sortKey: (g) => g.latest.diff,
+          cell: (g) => Text(
+            '${g.latest.diff > 0 ? '+' : ''}${formatPrice(g.latest.diff)}',
             style: TextStyle(
                 fontWeight: FontWeight.w800,
-                color: m.tillCheaper ? AppColors.terracotta : AppColors.mustard),
+                color: g.latest.tillCheaper ? AppColors.terracotta : AppColors.mustard),
           ),
         ),
         SortColumn(
-          label: 'Fiş',
-          width: 56,
+          label: 'Adet',
+          width: 60,
           numeric: true,
-          sortKey: (m) => m.receiptNo ?? 0,
-          cell: (m) => Text('${m.receiptNo ?? '-'}', style: const TextStyle(color: AppColors.brown400)),
+          sortKey: (g) => g.count,
+          cell: (g) => Text('${g.count}', style: const TextStyle(color: AppColors.brown600, fontWeight: FontWeight.w600)),
         ),
         SortColumn(
           label: '',
-          width: 116,
-          sortKey: (m) => m.resolved ? 1 : 0,
-          cell: (m) => Align(
+          width: 96,
+          sortKey: (g) => g.allResolved ? 1 : 0,
+          cell: (g) => Align(
             alignment: Alignment.centerRight,
             child: TextButton(
               onPressed: () async {
-                await widget.repo.setMismatchResolved(m.id, !m.resolved);
+                await widget.repo.deleteMismatchesForBarcode(g.barcode);
                 if (mounted && _includeResolved) setState(_loadResolved);
               },
               style: TextButton.styleFrom(
                 padding: const EdgeInsets.symmetric(horizontal: 8),
-                foregroundColor: m.resolved ? AppColors.brown500 : AppColors.success,
+                foregroundColor: AppColors.success,
               ),
-              child: Text(m.resolved ? 'Geri al' : 'Çözüldü', style: const TextStyle(fontSize: 12)),
+              child: const Text('Çözüldü', style: TextStyle(fontSize: 12)),
             ),
           ),
         ),
       ],
     );
   }
+}
+
+/// One product's mismatches collapsed into a single row -- the same
+/// product can rack up several (one per sale it happened on) while a
+/// stale/wrong catalog price sits uncorrected, and staff care about "is
+/// this product fixed", not each individual past sale. [latest] (by
+/// sold_at) drives the displayed price/diff/time; [count] is every
+/// mismatch on record for the barcode, resolved or not.
+class _MismatchGroup {
+  final String barcode;
+  final String? name;
+  final int count;
+  final bool allResolved;
+  final KasaPriceMismatch latest;
+  _MismatchGroup({required this.barcode, required this.name, required this.count, required this.allResolved, required this.latest});
+}
+
+List<_MismatchGroup> _groupByBarcode(List<KasaPriceMismatch> rows) {
+  final byBarcode = <String, List<KasaPriceMismatch>>{};
+  for (final r in rows) {
+    byBarcode.putIfAbsent(r.barcode, () => []).add(r);
+  }
+  return [
+    for (final entry in byBarcode.entries)
+      _MismatchGroup(
+        barcode: entry.key,
+        name: entry.value.firstWhere((m) => m.name != null, orElse: () => entry.value.first).name,
+        count: entry.value.length,
+        allResolved: entry.value.every((m) => m.resolved),
+        latest: entry.value.reduce((a, b) => a.soldAt.isAfter(b.soldAt) ? a : b),
+      ),
+  ];
 }
 
 // ===========================================================================

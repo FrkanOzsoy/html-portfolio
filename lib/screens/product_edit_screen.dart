@@ -31,6 +31,11 @@ class _ProductEditScreenState extends State<ProductEditScreen> {
   late final TextEditingController _priceController;
   late final TextEditingController _nameController;
   late final TextEditingController _barcodeController;
+  // Enter in one field moves down to the next, matching the field order on
+  // screen (Ürün Adı -> Barkod -> Fiyat), rather than doing nothing -- the
+  // desktop app is used with a keyboard, entering all three by hand.
+  final _barcodeFocus = FocusNode();
+  final _priceFocus = FocusNode();
   late final Future<List<KdvDepartment>> _departmentsFuture = _repo.getKdvDepartments();
   int? _selectedDepartment;
   // Only true once the user actually touches the KDV dropdown themselves --
@@ -86,6 +91,8 @@ class _ProductEditScreenState extends State<ProductEditScreen> {
     _priceController.dispose();
     _nameController.dispose();
     _barcodeController.dispose();
+    _barcodeFocus.dispose();
+    _priceFocus.dispose();
     super.dispose();
   }
 
@@ -175,19 +182,27 @@ class _ProductEditScreenState extends State<ProductEditScreen> {
             children: [
               TextField(
                 controller: _nameController,
+                textInputAction: TextInputAction.next,
+                onSubmitted: (_) => _barcodeFocus.requestFocus(),
                 decoration: const InputDecoration(labelText: 'Ürün Adı', isDense: true),
               ),
               const SizedBox(height: 16),
               TextField(
                 controller: _barcodeController,
+                focusNode: _barcodeFocus,
                 keyboardType: TextInputType.number,
                 inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+                textInputAction: TextInputAction.next,
+                onSubmitted: (_) => _priceFocus.requestFocus(),
                 decoration: InputDecoration(labelText: 'Barkod', isDense: true, errorText: _barcodeError),
               ),
               const SizedBox(height: 16),
               TextField(
                 controller: _priceController,
+                focusNode: _priceFocus,
                 keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                textInputAction: TextInputAction.done,
+                onSubmitted: (_) => FocusScope.of(context).unfocus(),
                 decoration: InputDecoration(labelText: 'Fiyat (₺)', isDense: true, errorText: _priceError),
               ),
               const SizedBox(height: 16),
