@@ -13,6 +13,24 @@ int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE prev,
     CreateAndAttachConsole();
   }
 
+  // Single-instance enforcement: a second launch (e.g. double-clicking the
+  // desktop shortcut when the app is already open, which happens often on
+  // a shared till PC) just brings the existing window to the front instead
+  // of opening a duplicate app on top of it. The mutex is the source of
+  // truth for "already running" -- released automatically on process exit,
+  // no manual cleanup needed.
+  ::CreateMutexW(nullptr, TRUE, L"ÇÇM-Barkod Okuyucu-SingleInstanceMutex");
+  if (::GetLastError() == ERROR_ALREADY_EXISTS) {
+    HWND existing = ::FindWindowW(nullptr, L"ÇÇM-Barkod Okuyucu");
+    if (existing != nullptr) {
+      if (::IsIconic(existing)) {
+        ::ShowWindow(existing, SW_RESTORE);
+      }
+      ::SetForegroundWindow(existing);
+    }
+    return EXIT_SUCCESS;
+  }
+
   // Initialize COM, so that it is available for use in the library and/or
   // plugins.
   ::CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
