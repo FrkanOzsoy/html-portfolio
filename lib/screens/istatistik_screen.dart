@@ -1365,12 +1365,31 @@ class _ScopedReceiptsSection extends StatefulWidget {
 }
 
 class _ScopedReceiptsSectionState extends State<_ScopedReceiptsSection> {
-  int _days = 7;
+  // Row cap for the table itself -- the header line's fiş/toplam counts
+  // still come from getReceiptsSummaryForBarcodes (exact, never capped), so
+  // a range with more than this many receipts is visibly flagged as
+  // truncated rather than silently under-reported. 200 -> 100: this table
+  // is for spot-checking specific receipts, not a full export -- a tighter
+  // cap keeps a wide Özel range from paging in more than it needs to.
+  static const _rowLimit = 100;
+
+  int? _days = 7;
+  DateTimeRange? _customRange;
   late Future<({List<KasaReceipt> rows, ScopedReceiptsSummary summary})> _future = _load();
 
   Future<({List<KasaReceipt> rows, ScopedReceiptsSummary summary})> _load() async {
-    final from = DateTime.now().subtract(Duration(days: _days));
-    final to = DateTime.now();
+    final DateTime from;
+    final DateTime to;
+    if (_customRange != null) {
+      from = _customRange!.start;
+      // showDateRangePicker returns day-precision dates -- push the upper
+      // bound to the start of the next day so the last selected day's own
+      // receipts aren't excluded by an exclusive/timestamp comparison.
+      to = _customRange!.end.add(const Duration(days: 1));
+    } else {
+      from = DateTime.now().subtract(Duration(days: _days!));
+      to = DateTime.now();
+    }
     // rows: capped display list (a table doesn't need thousands of rows).
     // summary: exact, unlimited count/total for the header line above it --
     // deliberately NOT derived from rows.length/summed rows, which would
@@ -1381,7 +1400,7 @@ class _ScopedReceiptsSectionState extends State<_ScopedReceiptsSection> {
       from: from,
       to: to,
       voidOnly: widget.voidOnly,
-      limit: 200,
+      limit: _rowLimit,
     );
     final summary = await widget.repo.getReceiptsSummaryForBarcodes(barcodes: widget.barcodes, from: from, to: to);
     return (rows: rows, summary: summary);
@@ -1389,19 +1408,43 @@ class _ScopedReceiptsSectionState extends State<_ScopedReceiptsSection> {
 
   void _setDays(int d) => setState(() {
         _days = d;
+        _customRange = null;
         _future = _load();
       });
+
+  Future<void> _pickCustomRange() async {
+    final now = DateTime.now();
+    final initial = _customRange ?? DateTimeRange(start: now.subtract(const Duration(days: 6)), end: now);
+    final picked = await showDateRangePicker(
+      context: context,
+      firstDate: now.subtract(const Duration(days: 450)),
+      lastDate: now,
+      initialDateRange: initial,
+      helpText: 'Tarih Aralığı Seçin',
+      cancelText: 'Vazgeç',
+      confirmText: 'Uygula',
+      saveText: 'Uygula',
+    );
+    if (picked == null) return;
+    setState(() {
+      _days = null;
+      _customRange = picked;
+      _future = _load();
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
     return ListView(
       padding: const EdgeInsets.fromLTRB(16, 14, 16, 24),
       children: [
-        Row(
+        Wrap(
+          spacing: 6,
+          runSpacing: 6,
+          crossAxisAlignment: WrapCrossAlignment.center,
           children: [
             const Text('Son', style: TextStyle(color: AppColors.brown500, fontSize: 12.5)),
-            const SizedBox(width: 8),
-            for (final d in const [7, 30, 90]) ...[
+            for (final d in const [7, 30, 90])
               ChoiceChip(
                 label: Text('$d gün'),
                 selected: _days == d,
@@ -1411,8 +1454,16 @@ class _ScopedReceiptsSectionState extends State<_ScopedReceiptsSection> {
                     color: _days == d ? Colors.white : AppColors.brown700, fontWeight: FontWeight.w600, fontSize: 12),
                 backgroundColor: AppColors.brown100,
               ),
-              const SizedBox(width: 6),
-            ],
+            ActionChip(
+              label: Text(_customRange == null ? 'Özel' : '${_dm(_customRange!.start)} - ${_dm(_customRange!.end)}'),
+              onPressed: _pickCustomRange,
+              backgroundColor: _customRange != null ? AppColors.terracotta : AppColors.brown100,
+              labelStyle: TextStyle(
+                color: _customRange != null ? Colors.white : AppColors.brown700,
+                fontWeight: FontWeight.w600,
+                fontSize: 12,
+              ),
+            ),
             const Spacer(),
             IconButton(
               onPressed: () => setState(() {
