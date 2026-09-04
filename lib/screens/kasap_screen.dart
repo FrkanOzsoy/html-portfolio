@@ -3,6 +3,7 @@ import '../app_settings.dart';
 import '../format.dart';
 import '../kasa_repo.dart';
 import '../models.dart';
+import '../platform_util.dart';
 import '../theme.dart';
 import '../widgets/product_sales_table.dart';
 import '../widgets/sortable_table.dart';
@@ -280,6 +281,7 @@ class _KasapContentState extends State<KasapContent> {
                           from: _from,
                           to: _to,
                           repo: widget.repo,
+                          compact: !isDesktopPlatform,
                         ),
                       ),
                       const SizedBox(height: 16),

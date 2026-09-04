@@ -1503,6 +1503,12 @@ class _ScopedReceiptsSectionState extends State<_ScopedReceiptsSection> {
                   initialAscending: false,
                   onRowTap: (r) => _openDetail(context, widget.repo, r),
                   rowTint: (r) => r.isVoid ? AppColors.terracotta.withValues(alpha: 0.07) : null,
+                  // Mobile: Fiş No/Ödeme/Ürün/Not made the row scroll well
+                  // past a phone's width for columns that are rarely the
+                  // reason someone's looking at this table -- Tarih/Tutar
+                  // (and Durum, for the not-void-only tab) cover the actual
+                  // question ("what sold, when, for how much") on their own.
+                  // Desktop keeps every column; there's room for it there.
                   columns: [
                     SortColumn(
                       label: 'Tarih',
@@ -1511,13 +1517,14 @@ class _ScopedReceiptsSectionState extends State<_ScopedReceiptsSection> {
                       cell: (r) => Text('${_dmy(r.soldAt)}  ${_hm(r.soldAt)}',
                           style: const TextStyle(fontSize: 12, color: AppColors.brown600)),
                     ),
-                    SortColumn(
-                      label: 'Fiş No',
-                      width: 80,
-                      numeric: true,
-                      sortKey: (r) => r.receiptNo ?? 0,
-                      cell: (r) => Text('${r.receiptNo ?? '-'}'),
-                    ),
+                    if (isDesktopPlatform)
+                      SortColumn(
+                        label: 'Fiş No',
+                        width: 80,
+                        numeric: true,
+                        sortKey: (r) => r.receiptNo ?? 0,
+                        cell: (r) => Text('${r.receiptNo ?? '-'}'),
+                      ),
                     SortColumn(
                       label: 'Tutar',
                       width: 110,
@@ -1528,16 +1535,17 @@ class _ScopedReceiptsSectionState extends State<_ScopedReceiptsSection> {
                               fontWeight: FontWeight.w700,
                               color: widget.voidOnly ? AppColors.terracotta : AppColors.brown900)),
                     ),
-                    if (!widget.voidOnly)
+                    if (isDesktopPlatform && !widget.voidOnly)
                       SortColumn(label: 'Ödeme', width: 150, sortKey: (r) => r.paymentLabel, cell: (r) => _PayChip(r)),
-                    SortColumn(
-                      label: 'Ürün',
-                      width: 64,
-                      numeric: true,
-                      sortKey: (r) => r.lineCount ?? 0,
-                      cell: (r) => Text('${r.lineCount ?? '-'}'),
-                    ),
-                    _noteColumn(widget.repo, widget.notes),
+                    if (isDesktopPlatform)
+                      SortColumn(
+                        label: 'Ürün',
+                        width: 64,
+                        numeric: true,
+                        sortKey: (r) => r.lineCount ?? 0,
+                        cell: (r) => Text('${r.lineCount ?? '-'}'),
+                      ),
+                    if (isDesktopPlatform) _noteColumn(widget.repo, widget.notes),
                     if (!widget.voidOnly)
                       SortColumn(
                         label: 'Durum',
