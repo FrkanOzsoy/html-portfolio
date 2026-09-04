@@ -3,9 +3,11 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../app_settings.dart';
+import '../data_repo.dart';
 import '../format.dart';
 import '../kasa_repo.dart';
 import '../models.dart';
+import '../normalize.dart';
 import '../platform_util.dart';
 import '../theme.dart';
 import '../widgets/product_peek_sheet.dart';
@@ -665,11 +667,29 @@ class _ReceiptDetailSheetState extends State<_ReceiptDetailSheet> {
                 ],
               ),
               const SizedBox(height: 4),
-              Text(
-                '${_dmy(receipt.soldAt)}  ${_hm(receipt.soldAt)}'
-                '${receipt.zNo != null ? '  ·  Z${receipt.zNo}' : ''}'
-                '${receipt.cashierNo != null ? '  ·  Kasiyer ${receipt.cashierNo}' : ''}',
-                style: const TextStyle(color: AppColors.brown500, fontSize: 12.5),
+              StreamBuilder<Map<String, KasaReceiptNote>>(
+                stream: _notes,
+                builder: (context, ns) {
+                  final note = ns.data?[receipt.belgeId];
+                  return Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          '${_dmy(receipt.soldAt)}  ${_hm(receipt.soldAt)}'
+                          '${receipt.zNo != null ? '  ·  Z${receipt.zNo}' : ''}'
+                          '${receipt.cashierNo != null ? '  ·  Kasiyer ${receipt.cashierNo}' : ''}',
+                          style: const TextStyle(color: AppColors.brown500, fontSize: 12.5),
+                        ),
+                      ),
+                      TextButton.icon(
+                        onPressed: () => editReceiptNote(context, repo, receipt, note),
+                        icon: Icon(note != null ? Icons.edit : Icons.add, size: 15),
+                        label: Text(note != null ? 'Düzenle' : 'Not Ekle'),
+                        style: TextButton.styleFrom(foregroundColor: AppColors.mustard, padding: const EdgeInsets.symmetric(horizontal: 8)),
+                      ),
+                    ],
+                  );
+                },
               ),
               const SizedBox(height: 14),
               Wrap(
@@ -692,13 +712,14 @@ class _ReceiptDetailSheetState extends State<_ReceiptDetailSheet> {
                 stream: _notes,
                 builder: (context, ns) {
                   final note = ns.data?[receipt.belgeId];
+                  if (note == null) return const SizedBox.shrink();
                   return Container(
                     width: double.infinity,
                     padding: const EdgeInsets.all(12),
                     decoration: BoxDecoration(
-                      color: note != null ? AppColors.mustard.withValues(alpha: 0.08) : AppColors.cream,
+                      color: AppColors.mustard.withValues(alpha: 0.08),
                       borderRadius: BorderRadius.circular(AppRadius.box),
-                      border: Border.all(color: note != null ? AppColors.mustard.withValues(alpha: 0.4) : AppColors.creamBorder),
+                      border: Border.all(color: AppColors.mustard.withValues(alpha: 0.4)),
                     ),
                     child: Row(
                       crossAxisAlignment: CrossAxisAlignment.start,
@@ -709,24 +730,15 @@ class _ReceiptDetailSheetState extends State<_ReceiptDetailSheet> {
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              Text(note?.note ?? 'Bu fiş için not yok.',
-                                  style: TextStyle(
-                                      fontSize: 13,
-                                      color: note != null ? AppColors.brown900 : AppColors.brown400)),
-                              if (note?.updatedBy != null)
+                              Text(note.note, style: const TextStyle(fontSize: 13, color: AppColors.brown900)),
+                              if (note.updatedBy != null)
                                 Padding(
                                   padding: const EdgeInsets.only(top: 3),
-                                  child: Text('${note!.updatedBy} · ${_dm(note.updatedAt)} ${_hm(note.updatedAt)}',
+                                  child: Text('${note.updatedBy} · ${_dm(note.updatedAt)} ${_hm(note.updatedAt)}',
                                       style: const TextStyle(fontSize: 10.5, color: AppColors.brown400)),
                                 ),
                             ],
                           ),
-                        ),
-                        TextButton.icon(
-                          onPressed: () => editReceiptNote(context, repo, receipt, note),
-                          icon: Icon(note != null ? Icons.edit : Icons.add, size: 15),
-                          label: Text(note != null ? 'Düzenle' : 'Not Ekle'),
-                          style: TextButton.styleFrom(foregroundColor: AppColors.mustard),
                         ),
                       ],
                     ),
@@ -756,9 +768,22 @@ class _ReceiptDetailSheetState extends State<_ReceiptDetailSheet> {
                       sortKey: (l) => l.lineNo ?? 0,
                       cell: (l) => Text('${l.lineNo ?? '-'}', style: const TextStyle(color: AppColors.brown400)),
                     ),
+                    if (isDesktopPlatform)
+                      SortColumn(
+                        label: '#',
+                        width: 32,
+                        numeric: true,
+                        sortKey: (l) => l.lineNo ?? 0,
+                        cell: (l) => Text('${l.lineNo ?? '-'}', style: const TextStyle(color: AppColors.brown400)),
+                      ),
                     SortColumn(
+                      // Was flex 3 -- wide enough on its own to push Tutar
+                      // (the actual price, the whole reason someone opens
+                      // this sheet) off the edge with no visible way to
+                      // scroll to it. flex 2 is still plenty for a product
+                      // name at this sheet width.
                       label: 'Ürün',
-                      flex: 3,
+                      flex: 2,
                       sortKey: (l) => (l.name ?? l.barcode ?? '').toLowerCase(),
                       cell: (l) => Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
@@ -768,35 +793,37 @@ class _ReceiptDetailSheetState extends State<_ReceiptDetailSheet> {
                               style: TextStyle(
                                   fontWeight: FontWeight.w600,
                                   decoration: l.isVoidLine ? TextDecoration.lineThrough : null)),
-                          if (l.name != null && l.barcode != null)
+                          if (isDesktopPlatform && l.name != null && l.barcode != null)
                             Text(l.barcode!, style: const TextStyle(fontSize: 10.5, color: AppColors.brown400)),
                         ],
                       ),
                     ),
                     SortColumn(
                       label: 'Adet',
-                      width: 66,
+                      width: 60,
                       numeric: true,
                       sortKey: (l) => l.qty ?? 0,
                       cell: (l) => Text(_qty(l.qty)),
                     ),
-                    SortColumn(
-                      label: 'Birim',
-                      width: 84,
-                      numeric: true,
-                      sortKey: (l) => l.unitPrice ?? 0,
-                      cell: (l) => Text(formatPrice(l.unitPrice)),
-                    ),
-                    SortColumn(
-                      label: 'KDV',
-                      width: 52,
-                      numeric: true,
-                      sortKey: (l) => l.vatRate ?? 0,
-                      cell: (l) => Text(l.vatRate == null ? '-' : '%${l.vatRate!.toStringAsFixed(0)}'),
-                    ),
+                    if (isDesktopPlatform)
+                      SortColumn(
+                        label: 'Birim',
+                        width: 76,
+                        numeric: true,
+                        sortKey: (l) => l.unitPrice ?? 0,
+                        cell: (l) => Text(formatPrice(l.unitPrice)),
+                      ),
+                    if (isDesktopPlatform)
+                      SortColumn(
+                        label: 'KDV',
+                        width: 46,
+                        numeric: true,
+                        sortKey: (l) => l.vatRate ?? 0,
+                        cell: (l) => Text(l.vatRate == null ? '-' : '%${l.vatRate!.toStringAsFixed(0)}'),
+                      ),
                     SortColumn(
                       label: 'Tutar',
-                      width: 92,
+                      width: 84,
                       numeric: true,
                       sortKey: (l) => l.lineTotal ?? 0,
                       cell: (l) => Text(formatPrice(l.lineTotal),
@@ -1353,11 +1380,13 @@ class _ScopedReceiptsSection extends StatefulWidget {
   final List<String> barcodes;
   final Map<String, KasaReceiptNote> notes;
   final bool voidOnly;
+  final String title;
   const _ScopedReceiptsSection({
     required this.repo,
     required this.barcodes,
     required this.notes,
     required this.voidOnly,
+    required this.title,
   });
 
   @override
@@ -1375,9 +1404,9 @@ class _ScopedReceiptsSectionState extends State<_ScopedReceiptsSection> {
 
   int? _days = 7;
   DateTimeRange? _customRange;
-  late Future<({List<KasaReceipt> rows, ScopedReceiptsSummary summary})> _future = _load();
+  late Future<({List<KasaReceipt> rows, ScopedReceiptsSummary summary, Map<int, num> subtotals})> _future = _load();
 
-  Future<({List<KasaReceipt> rows, ScopedReceiptsSummary summary})> _load() async {
+  Future<({List<KasaReceipt> rows, ScopedReceiptsSummary summary, Map<int, num> subtotals})> _load() async {
     final DateTime from;
     final DateTime to;
     if (_customRange != null) {
@@ -1403,7 +1432,11 @@ class _ScopedReceiptsSectionState extends State<_ScopedReceiptsSection> {
       limit: _rowLimit,
     );
     final summary = await widget.repo.getReceiptsSummaryForBarcodes(barcodes: widget.barcodes, from: from, to: to);
-    return (rows: rows, summary: summary);
+    final subtotals = await widget.repo.getScopedSubtotalsForReceipts(
+      receiptIds: [for (final r in rows) r.id],
+      barcodes: widget.barcodes,
+    );
+    return (rows: rows, summary: summary, subtotals: subtotals);
   }
 
   void _setDays(int d) => setState(() {
@@ -1483,7 +1516,7 @@ class _ScopedReceiptsSectionState extends State<_ScopedReceiptsSection> {
           ],
         ),
         const SizedBox(height: 14),
-        FutureBuilder<({List<KasaReceipt> rows, ScopedReceiptsSummary summary})>(
+        FutureBuilder<({List<KasaReceipt> rows, ScopedReceiptsSummary summary, Map<int, num> subtotals})>(
           future: _future,
           builder: (context, snap) {
             if (!snap.hasData) {
@@ -1491,6 +1524,7 @@ class _ScopedReceiptsSectionState extends State<_ScopedReceiptsSection> {
             }
             final rows = snap.data!.rows;
             final s = snap.data!.summary;
+            final subtotals = snap.data!.subtotals;
             if (rows.isEmpty) return const _EmptyKasa();
             final shownCount = widget.voidOnly ? s.iptalSayisi : s.fisSayisi;
             final shownTotal = widget.voidOnly ? s.iptalDeger : s.toplam;
@@ -1543,6 +1577,17 @@ class _ScopedReceiptsSectionState extends State<_ScopedReceiptsSection> {
                           style: TextStyle(
                               fontWeight: FontWeight.w700,
                               color: widget.voidOnly ? AppColors.terracotta : AppColors.brown900)),
+                    ),
+                    // The fiş's *whole* total above can include non-Kasap/
+                    // Manav items in a mixed cart -- this is just the
+                    // scoped portion (see KasaRepo.getScopedSubtotalsForReceipts).
+                    SortColumn(
+                      label: '${widget.title} Tutarı',
+                      width: 100,
+                      numeric: true,
+                      sortKey: (r) => subtotals[r.id] ?? 0,
+                      cell: (r) => Text(formatPrice(subtotals[r.id]),
+                          style: const TextStyle(fontWeight: FontWeight.w600, color: AppColors.terracotta)),
                     ),
                     if (isDesktopPlatform && !widget.voidOnly)
                       SortColumn(label: 'Ödeme', width: 150, sortKey: (r) => r.paymentLabel, cell: (r) => _PayChip(r)),
@@ -1832,7 +1877,16 @@ class _ScopedSummarySectionState extends State<_ScopedSummarySection> {
 class ScopedStatsBody extends StatefulWidget {
   final String title;
   final Future<Set<String>> Function() barcodesResolver;
-  const ScopedStatsBody({super.key, required this.title, required this.barcodesResolver});
+  /// Kasap only -- adds a 5th "Hesap" tab (Ramazan's manual sales
+  /// calculation, see kasap_screen.dart's HesapSection). Manav never gets
+  /// this; it's specific to Ramazan settling up on his own Kasap sales.
+  final bool showHesap;
+  const ScopedStatsBody({
+    super.key,
+    required this.title,
+    required this.barcodesResolver,
+    this.showHesap = false,
+  });
 
   @override
   State<ScopedStatsBody> createState() => _ScopedStatsBodyState();
@@ -1840,7 +1894,7 @@ class ScopedStatsBody extends StatefulWidget {
 
 class _ScopedStatsBodyState extends State<ScopedStatsBody> with SingleTickerProviderStateMixin {
   final _repo = KasaRepo();
-  late final TabController _tab = TabController(length: 4, vsync: this);
+  late final TabController _tab = TabController(length: widget.showHesap ? 5 : 4, vsync: this);
   Set<String>? _barcodes;
   Map<String, KasaReceiptNote> _notes = const {};
   StreamSubscription? _notesSub;
@@ -1891,11 +1945,12 @@ class _ScopedStatsBodyState extends State<ScopedStatsBody> with SingleTickerProv
             unselectedLabelColor: AppColors.brown600,
             indicatorColor: AppColors.terracotta,
             labelStyle: const TextStyle(fontWeight: FontWeight.w700, fontSize: 13.5),
-            tabs: const [
-              Tab(text: 'Özet'),
-              Tab(text: 'Son İşlemler'),
-              Tab(text: 'İptaller'),
-              Tab(text: 'Ürün Satışları'),
+            tabs: [
+              const Tab(text: 'Özet'),
+              const Tab(text: 'Son İşlemler'),
+              const Tab(text: 'İptaller'),
+              const Tab(text: 'Ürün Satışları'),
+              if (widget.showHesap) const Tab(text: 'Hesap'),
             ],
           ),
         ),
@@ -1904,17 +1959,788 @@ class _ScopedStatsBodyState extends State<ScopedStatsBody> with SingleTickerProv
             controller: _tab,
             children: [
               _ScopedSummarySection(repo: _repo, barcodes: barcodes),
-              _ScopedReceiptsSection(repo: _repo, barcodes: barcodes, notes: _notes, voidOnly: false),
-              _ScopedReceiptsSection(repo: _repo, barcodes: barcodes, notes: _notes, voidOnly: true),
+              _ScopedReceiptsSection(repo: _repo, barcodes: barcodes, notes: _notes, voidOnly: false, title: widget.title),
+              _ScopedReceiptsSection(repo: _repo, barcodes: barcodes, notes: _notes, voidOnly: true, title: widget.title),
               KasapContent(
                 repo: _repo,
                 barcodesResolver: widget.barcodesResolver,
                 emptyMessage: '${widget.title} için barkod seti bulunamadı.',
               ),
+              if (widget.showHesap) HesapSection(repo: _repo, barcodes: barcodes),
             ],
           ),
         ),
       ],
+    );
+  }
+}
+
+// ===========================================================================
+// Hesap (Kasap only) -- Ramazan's own sales calculation
+// ===========================================================================
+
+enum _HesapPreset { thisMonth, lastMonth, last30, last90, custom }
+
+/// Kasap's 5th tab -- Ramazan (the contractor who settles up based on his
+/// own Kasap sales) used to calculate this by hand. Combines real POS fişes
+/// (sales + iptal, Kasap-scoped) with his own hand-entered sales into one
+/// running total for a date range he picks; the range itself is persisted
+/// (SharedPreferences) so it's still selected next time he opens the tab.
+class HesapSection extends StatefulWidget {
+  final KasaRepo repo;
+  final List<String> barcodes;
+  const HesapSection({super.key, required this.repo, required this.barcodes});
+
+  @override
+  State<HesapSection> createState() => _HesapSectionState();
+}
+
+class _HesapData {
+  final List<KasaReceipt> receipts;
+  final Map<int, num> subtotals;
+  final List<KasapManualSale> manual;
+  final List<KasaProductSalesReport> breakdown;
+  _HesapData({required this.receipts, required this.subtotals, required this.manual, required this.breakdown});
+}
+
+class _HesapSectionState extends State<HesapSection> {
+  static const _kPresetKey = 'hesap_range_preset';
+  static const _kFromKey = 'hesap_range_from';
+  static const _kToKey = 'hesap_range_to';
+
+  _HesapPreset _preset = _HesapPreset.thisMonth;
+  late DateTime _from;
+  late DateTime _to;
+  bool _restored = false;
+  Future<_HesapData>? _future;
+
+  @override
+  void initState() {
+    super.initState();
+    _computeDatesForPreset(_preset);
+    _restore();
+  }
+
+  Future<void> _restore() async {
+    final prefs = await SharedPreferences.getInstance();
+    final presetName = prefs.getString(_kPresetKey);
+    if (presetName != null) {
+      _HesapPreset? preset;
+      for (final p in _HesapPreset.values) {
+        if (p.name == presetName) preset = p;
+      }
+      if (preset == _HesapPreset.custom) {
+        final fromStr = prefs.getString(_kFromKey);
+        final toStr = prefs.getString(_kToKey);
+        if (fromStr != null && toStr != null) {
+          _preset = _HesapPreset.custom;
+          _from = DateTime.parse(fromStr);
+          _to = DateTime.parse(toStr);
+        }
+      } else if (preset != null) {
+        _preset = preset;
+        _computeDatesForPreset(preset);
+      }
+    }
+    if (!mounted) return;
+    setState(() {
+      _restored = true;
+      _future = _load();
+    });
+  }
+
+  Future<void> _persist() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_kPresetKey, _preset.name);
+    if (_preset == _HesapPreset.custom) {
+      await prefs.setString(_kFromKey, _from.toIso8601String());
+      await prefs.setString(_kToKey, _to.toIso8601String());
+    }
+  }
+
+  void _computeDatesForPreset(_HesapPreset preset) {
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    switch (preset) {
+      case _HesapPreset.thisMonth:
+        _from = DateTime(now.year, now.month, 1);
+        _to = today;
+      case _HesapPreset.lastMonth:
+        final firstOfThisMonth = DateTime(now.year, now.month, 1);
+        final lastOfPrevMonth = firstOfThisMonth.subtract(const Duration(days: 1));
+        _from = DateTime(lastOfPrevMonth.year, lastOfPrevMonth.month, 1);
+        _to = lastOfPrevMonth;
+      case _HesapPreset.last30:
+        _from = today.subtract(const Duration(days: 29));
+        _to = today;
+      case _HesapPreset.last90:
+        _from = today.subtract(const Duration(days: 89));
+        _to = today;
+      case _HesapPreset.custom:
+        break;
+    }
+  }
+
+  String _presetLabel(_HesapPreset p) => switch (p) {
+        _HesapPreset.thisMonth => 'Bu Ay',
+        _HesapPreset.lastMonth => 'Geçen Ay',
+        _HesapPreset.last30 => 'Son 30 gün',
+        _HesapPreset.last90 => 'Son 90 gün',
+        _HesapPreset.custom => '${_dm(_from)} - ${_dm(_to)}',
+      };
+
+  void _selectPreset(_HesapPreset p) {
+    setState(() {
+      _preset = p;
+      _computeDatesForPreset(p);
+      _future = _load();
+    });
+    unawaited(_persist());
+  }
+
+  Future<void> _pickCustomRange() async {
+    final now = DateTime.now();
+    final initial = DateTimeRange(
+      start: _from.isAfter(now) ? now : _from,
+      end: _to.isAfter(now) ? now : _to,
+    );
+    final picked = await showDateRangePicker(
+      context: context,
+      firstDate: now.subtract(const Duration(days: 730)),
+      lastDate: now,
+      initialDateRange: initial,
+      helpText: 'Tarih Aralığı Seçin',
+      cancelText: 'Vazgeç',
+      confirmText: 'Uygula',
+      saveText: 'Uygula',
+    );
+    if (picked == null) return;
+    setState(() {
+      _preset = _HesapPreset.custom;
+      _from = picked.start;
+      _to = picked.end;
+      _future = _load();
+    });
+    unawaited(_persist());
+  }
+
+  Future<_HesapData> _load() async {
+    final receiptsTo = _to.add(const Duration(days: 1));
+    final receipts = await widget.repo.getReceiptsForBarcodes(
+      barcodes: widget.barcodes,
+      from: _from,
+      to: receiptsTo,
+      voidOnly: false,
+      limit: 300,
+    );
+    final excluded = await widget.repo.getExcludedReceiptIds();
+    final visible = [
+      for (final r in receipts)
+        if (!excluded.contains(r.id)) r,
+    ];
+    final subtotals = await widget.repo.getScopedSubtotalsForReceipts(
+      receiptIds: [for (final r in visible) r.id],
+      barcodes: widget.barcodes,
+    );
+    final manual = await widget.repo.getManualSales(from: _from, to: _to);
+
+    // "Ürün Dağılımı" pie, same shape/widget as Özet's own. Real-sales
+    // portion comes from the pre-aggregated per-product report (matches
+    // what Özet already shows for this scope); manual entries are merged
+    // in by barcode. Note: unlike the list/total above, this doesn't
+    // account for excluded fişes -- the pre-aggregated source is receipt-
+    // agnostic, so an excluded fiş's items still count here. The "Toplam"
+    // figure stays the authoritative number; this chart is just a shape-
+    // of-sales visual.
+    final real = await widget.repo.getProductSalesReport(
+      from: _from,
+      to: _to,
+      barcodes: widget.barcodes,
+      includeUnsold: false,
+      limit: 1000,
+    );
+    final byBarcode = {for (final p in real) p.barcode: p};
+    for (final s in manual) {
+      final existing = byBarcode[s.barcode];
+      if (existing != null) {
+        byBarcode[s.barcode] = KasaProductSalesReport(
+          barcode: existing.barcode,
+          stockname: existing.stockname,
+          qty: existing.qty + (s.weight ?? 1),
+          revenue: existing.revenue + s.price,
+          lineCount: existing.lineCount + 1,
+        );
+      } else {
+        byBarcode[s.barcode] = KasaProductSalesReport(
+          barcode: s.barcode,
+          stockname: s.stockname,
+          qty: s.weight ?? 1,
+          revenue: s.price,
+          lineCount: 1,
+        );
+      }
+    }
+
+    return _HesapData(receipts: visible, subtotals: subtotals, manual: manual, breakdown: byBarcode.values.toList());
+  }
+
+  void _reload() => setState(() => _future = _load());
+
+  Future<void> _excludeReceipt(KasaReceipt r) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Fişi Hesap Dışı Bırak'),
+        content: Text(
+          'Fiş #${r.receiptNo ?? r.id} bu hesaplamadan çıkarılacak. Fiş Son İşlemler/İptaller\'de görünmeye devam eder, '
+          'sadece buradaki toplamdan hariç tutulur.',
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.of(dialogContext).pop(false), child: const Text('Vazgeç')),
+          ElevatedButton(
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            style: ElevatedButton.styleFrom(backgroundColor: AppColors.terracotta),
+            child: const Text('Hariç Tut'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+    final staffName = await DataRepo().getStaffName();
+    await widget.repo.excludeReceiptFromHesap(r.id, excludedBy: staffName);
+    _reload();
+  }
+
+  Future<void> _deleteManualSale(KasapManualSale s) async {
+    await widget.repo.deleteManualSale(s.id);
+    _reload();
+  }
+
+  Future<void> _addSale() async {
+    final added = await showDialog<bool>(
+      context: context,
+      builder: (_) => _AddManualSaleDialog(repo: widget.repo, barcodes: widget.barcodes),
+    );
+    if (added == true) _reload();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (!_restored) return const Center(child: CircularProgressIndicator());
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 14, 16, 0),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: [
+              Expanded(
+                child: Wrap(
+                  spacing: 6,
+                  runSpacing: 6,
+                  crossAxisAlignment: WrapCrossAlignment.center,
+                  children: [
+                    const Text('Zaman:',
+                        style: TextStyle(color: AppColors.brown600, fontWeight: FontWeight.w600, fontSize: 12.5)),
+                    for (final p in [_HesapPreset.thisMonth, _HesapPreset.lastMonth, _HesapPreset.last30, _HesapPreset.last90])
+                      ChoiceChip(
+                        label: Text(_presetLabel(p)),
+                        selected: _preset == p,
+                        onSelected: (_) => _selectPreset(p),
+                        selectedColor: AppColors.terracotta,
+                        labelStyle: TextStyle(
+                            color: _preset == p ? Colors.white : AppColors.brown700,
+                            fontSize: 11.5,
+                            fontWeight: FontWeight.w600),
+                        backgroundColor: AppColors.brown100,
+                      ),
+                    ActionChip(
+                      label: Text(_preset == _HesapPreset.custom ? _presetLabel(_preset) : 'Özel'),
+                      onPressed: _pickCustomRange,
+                      backgroundColor: _preset == _HesapPreset.custom ? AppColors.terracotta : AppColors.brown100,
+                      labelStyle: TextStyle(
+                        color: _preset == _HesapPreset.custom ? Colors.white : AppColors.brown700,
+                        fontSize: 11.5,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 8),
+              ElevatedButton.icon(
+                onPressed: _addSale,
+                icon: const Icon(Icons.add, size: 18),
+                label: const Text('Satış Ekle'),
+                style: ElevatedButton.styleFrom(backgroundColor: AppColors.brown800, foregroundColor: Colors.white),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 10),
+        Expanded(
+          child: FutureBuilder<_HesapData>(
+            future: _future,
+            builder: (context, snap) {
+              if (!snap.hasData) return const Center(child: CircularProgressIndicator());
+              final data = snap.data!;
+              // Voided fişes still show (for visibility) but don't add to
+              // the total -- a cancelled sale isn't money he actually made.
+              final realTotal = data.receipts
+                  .where((r) => !r.isVoid)
+                  .fold<num>(0, (m, r) => m + (data.subtotals[r.id] ?? 0));
+              final manualTotal = data.manual.fold<num>(0, (m, s) => m + s.price);
+              final grandTotal = realTotal + manualTotal;
+
+              final items = <_HesapListItem>[
+                for (final r in data.receipts) _HesapListItem.receipt(r, data.subtotals[r.id] ?? 0),
+                for (final s in data.manual) _HesapListItem.manual(s),
+              ]..sort((a, b) => b.at.compareTo(a.at));
+
+              return ListView(
+                padding: const EdgeInsets.fromLTRB(16, 0, 16, 24),
+                children: [
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                    decoration: BoxDecoration(
+                      color: AppColors.creamCard,
+                      borderRadius: BorderRadius.circular(AppRadius.box),
+                      border: Border.all(color: AppColors.creamBorder),
+                    ),
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        Text('${items.length} kayıt', style: const TextStyle(color: AppColors.brown500, fontSize: 12.5)),
+                        Text('Toplam: ${formatPrice(grandTotal)}',
+                            style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15, color: AppColors.terracotta)),
+                      ],
+                    ),
+                  ),
+                  if (data.breakdown.isNotEmpty) ...[
+                    const SizedBox(height: 16),
+                    const Text('Ürün Dağılımı', style: TextStyle(fontWeight: FontWeight.bold, color: AppColors.brown800)),
+                    const SizedBox(height: 10),
+                    _ProductRevenueBreakdown(rows: data.breakdown),
+                  ],
+                  const SizedBox(height: 18),
+                  if (items.isEmpty) const _EmptyKasa(),
+                  for (final item in items)
+                    _HesapRow(
+                      item: item,
+                      repo: widget.repo,
+                      onExcludeReceipt: _excludeReceipt,
+                      onDeleteManual: _deleteManualSale,
+                    ),
+                ],
+              );
+            },
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+/// Tags whether a row is real POS data (read-only besides "exclude") or a
+/// manual entry (deletable) -- [at] is what the merged list sorts by.
+class _HesapListItem {
+  final KasaReceipt? receipt;
+  final num? receiptSubtotal;
+  final KasapManualSale? manual;
+  final DateTime at;
+
+  _HesapListItem.receipt(KasaReceipt r, num subtotal)
+      : receipt = r,
+        receiptSubtotal = subtotal,
+        manual = null,
+        at = r.soldAt;
+
+  _HesapListItem.manual(KasapManualSale s)
+      : receipt = null,
+        receiptSubtotal = null,
+        manual = s,
+        at = s.saleDate;
+}
+
+class _HesapRow extends StatelessWidget {
+  final _HesapListItem item;
+  final KasaRepo repo;
+  final ValueChanged<KasaReceipt> onExcludeReceipt;
+  final ValueChanged<KasapManualSale> onDeleteManual;
+  const _HesapRow({
+    required this.item,
+    required this.repo,
+    required this.onExcludeReceipt,
+    required this.onDeleteManual,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final r = item.receipt;
+    if (r != null) {
+      return Container(
+        margin: const EdgeInsets.only(bottom: 6),
+        decoration: BoxDecoration(
+          color: r.isVoid ? AppColors.terracotta.withValues(alpha: 0.07) : AppColors.creamCard,
+          borderRadius: BorderRadius.circular(AppRadius.box),
+          border: Border.all(color: AppColors.creamBorder),
+        ),
+        // ListTile directly inside a colored Container hides its own ink
+        // splash/ripple (Flutter warns about this) -- InkWell here instead,
+        // matching every other card in this file.
+        child: InkWell(
+          onTap: () => _openDetail(context, repo, r),
+          borderRadius: BorderRadius.circular(AppRadius.box),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+            child: Row(
+              children: [
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        r.isVoid
+                            ? 'İPTAL Fiş${r.receiptNo != null ? ' #${r.receiptNo}' : ''}'
+                            : 'Fiş${r.receiptNo != null ? ' #${r.receiptNo}' : ''}',
+                        style: TextStyle(
+                            fontWeight: FontWeight.w600, fontSize: 13, color: r.isVoid ? AppColors.terracotta : AppColors.brown900),
+                      ),
+                      const SizedBox(height: 2),
+                      Text('${_dmy(r.soldAt)}  ${_hm(r.soldAt)}',
+                          style: const TextStyle(fontSize: 11.5, color: AppColors.brown500)),
+                    ],
+                  ),
+                ),
+                Text(formatPrice(item.receiptSubtotal),
+                    style: TextStyle(
+                        fontWeight: FontWeight.bold, fontSize: 14, color: r.isVoid ? AppColors.terracotta : AppColors.brown900)),
+                IconButton(
+                  icon: const Icon(Icons.remove_circle_outline, size: 18, color: AppColors.brown400),
+                  tooltip: 'Hesap dışı bırak',
+                  onPressed: () => onExcludeReceipt(r),
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+    }
+    final s = item.manual!;
+    return Container(
+      margin: const EdgeInsets.only(bottom: 6),
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+      decoration: BoxDecoration(
+        color: AppColors.brown100.withValues(alpha: 0.35),
+        borderRadius: BorderRadius.circular(AppRadius.box),
+        border: Border.all(color: AppColors.creamBorder),
+      ),
+      child: Row(
+        children: [
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Flexible(child: Text(s.stockname, style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13))),
+                    const SizedBox(width: 6),
+                    const _Badge('MANUEL', AppColors.brown500),
+                  ],
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  [
+                    _dmy(s.saleDate),
+                    if (s.weight != null) '${s.weight} kg',
+                    if (s.note != null) s.note!,
+                  ].join('  ·  '),
+                  style: const TextStyle(fontSize: 11.5, color: AppColors.brown500),
+                ),
+              ],
+            ),
+          ),
+          Text(formatPrice(s.price), style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14, color: AppColors.brown900)),
+          IconButton(
+            icon: const Icon(Icons.delete_outline, size: 18, color: AppColors.terracotta),
+            tooltip: 'Sil',
+            onPressed: () => onDeleteManual(s),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Weight-priced (GRAMAJ) items are priced per kilogram in Digisoft --
+/// entering one of weight/price recomputes the other via that rate.
+/// Anything else (ADET etc.) is unit-priced: just a plain, freely editable
+/// price field, no weight.
+class _AddManualSaleDialog extends StatefulWidget {
+  final KasaRepo repo;
+  final List<String> barcodes;
+  const _AddManualSaleDialog({required this.repo, required this.barcodes});
+
+  @override
+  State<_AddManualSaleDialog> createState() => _AddManualSaleDialogState();
+}
+
+class _AddManualSaleDialogState extends State<_AddManualSaleDialog> {
+  Map<String, Product>? _products;
+  Product? _selected;
+  DateTime _date = DateTime.now();
+  final _weightController = TextEditingController();
+  final _priceController = TextEditingController();
+  final _noteController = TextEditingController();
+  final _searchController = TextEditingController();
+  bool _saving = false;
+  String? _error;
+  // Guards against the weight<->price mutual-recompute loop re-triggering
+  // itself when one field's listener programmatically sets the other.
+  bool _updating = false;
+
+  bool get _isWeighted => _selected?.stockunit?.toUpperCase() == 'GRAMAJ';
+
+  @override
+  void initState() {
+    super.initState();
+    DataRepo().lookupProductsLocal(widget.barcodes).then((map) {
+      if (mounted) setState(() => _products = map);
+    });
+  }
+
+  @override
+  void dispose() {
+    _weightController.dispose();
+    _priceController.dispose();
+    _noteController.dispose();
+    _searchController.dispose();
+    super.dispose();
+  }
+
+  void _selectProduct(Product p) {
+    setState(() {
+      _selected = p;
+      _weightController.clear();
+      _priceController.text = p.price?.toString() ?? '';
+      _error = null;
+    });
+  }
+
+  void _onWeightChanged(String text) {
+    if (_updating || !_isWeighted) return;
+    final w = num.tryParse(text.replaceAll(',', '.'));
+    final perKg = _selected?.price;
+    if (w == null || perKg == null) return;
+    _updating = true;
+    _priceController.text = (w * perKg).toStringAsFixed(2);
+    _updating = false;
+  }
+
+  void _onPriceChanged(String text) {
+    if (_updating || !_isWeighted) return;
+    final price = num.tryParse(text.replaceAll(',', '.'));
+    final perKg = _selected?.price;
+    if (price == null || perKg == null || perKg == 0) return;
+    _updating = true;
+    _weightController.text = (price / perKg).toStringAsFixed(3);
+    _updating = false;
+  }
+
+  Future<void> _pickDate() async {
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: _date,
+      firstDate: DateTime.now().subtract(const Duration(days: 730)),
+      lastDate: DateTime.now(),
+      helpText: 'Satış Tarihi',
+      cancelText: 'Vazgeç',
+      confirmText: 'Seç',
+    );
+    if (picked != null) setState(() => _date = picked);
+  }
+
+  Future<void> _save() async {
+    final product = _selected;
+    if (product == null) {
+      setState(() => _error = 'Bir ürün seçin.');
+      return;
+    }
+    final price = num.tryParse(_priceController.text.trim().replaceAll(',', '.'));
+    if (price == null || price <= 0) {
+      setState(() => _error = 'Geçerli bir fiyat girin.');
+      return;
+    }
+    final weight = _isWeighted ? num.tryParse(_weightController.text.trim().replaceAll(',', '.')) : null;
+    setState(() {
+      _saving = true;
+      _error = null;
+    });
+    try {
+      final staffName = await DataRepo().getStaffName();
+      await widget.repo.addManualSale(
+        barcode: product.barcode,
+        stockname: product.stockname,
+        saleDate: _date,
+        weight: weight,
+        price: price,
+        note: _noteController.text.trim().isEmpty ? null : _noteController.text.trim(),
+        createdBy: staffName,
+      );
+      if (mounted) Navigator.of(context).pop(true);
+    } catch (_) {
+      if (mounted) {
+        setState(() {
+          _saving = false;
+          _error = 'Kaydedilemedi, tekrar deneyin.';
+        });
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final products = _products;
+    final query = normalizeTurkish(_searchController.text.trim());
+    final filtered = products == null
+        ? const <Product>[]
+        : products.values.where((p) => query.isEmpty || normalizeTurkish(p.stockname).contains(query)).take(30).toList()
+      ..sort((a, b) => a.stockname.compareTo(b.stockname));
+
+    return Dialog(
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(AppRadius.box)),
+      child: SizedBox(
+        width: 420,
+        child: Padding(
+          padding: const EdgeInsets.all(20),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              const Text('Satış Ekle', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: AppColors.brown900)),
+              const SizedBox(height: 16),
+              if (_selected == null) ...[
+                TextField(
+                  controller: _searchController,
+                  autofocus: true,
+                  decoration: const InputDecoration(labelText: 'Ürün ara', isDense: true, prefixIcon: Icon(Icons.search)),
+                  onChanged: (_) => setState(() {}),
+                ),
+                const SizedBox(height: 8),
+                if (products == null)
+                  const Padding(padding: EdgeInsets.all(16), child: Center(child: CircularProgressIndicator()))
+                else
+                  ConstrainedBox(
+                    constraints: const BoxConstraints(maxHeight: 260),
+                    child: ListView(
+                      shrinkWrap: true,
+                      children: [
+                        for (final p in filtered)
+                          ListTile(
+                            dense: true,
+                            title: Text(p.stockname, style: const TextStyle(fontSize: 13)),
+                            subtitle: Text('${formatPrice(p.price)}${p.stockunit != null ? ' / ${p.stockunit}' : ''}',
+                                style: const TextStyle(fontSize: 11.5, color: AppColors.brown500)),
+                            onTap: () => _selectProduct(p),
+                          ),
+                      ],
+                    ),
+                  ),
+              ] else ...[
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                  decoration: BoxDecoration(color: AppColors.brown100, borderRadius: BorderRadius.circular(AppRadius.chip)),
+                  child: Row(
+                    children: [
+                      Expanded(
+                          child: Text(_selected!.stockname,
+                              style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13))),
+                      IconButton(
+                        icon: const Icon(Icons.close, size: 18),
+                        onPressed: () => setState(() {
+                          _selected = null;
+                          _weightController.clear();
+                          _priceController.clear();
+                        }),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 12),
+                if (_isWeighted)
+                  Row(
+                    children: [
+                      Expanded(
+                        child: TextField(
+                          controller: _weightController,
+                          keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                          onChanged: _onWeightChanged,
+                          decoration: const InputDecoration(labelText: 'Ağırlık (kg)', isDense: true),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: TextField(
+                          controller: _priceController,
+                          keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                          onChanged: _onPriceChanged,
+                          decoration: const InputDecoration(labelText: 'Fiyat (₺)', isDense: true),
+                        ),
+                      ),
+                    ],
+                  )
+                else
+                  TextField(
+                    controller: _priceController,
+                    keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                    decoration: InputDecoration(labelText: 'Fiyat (₺)', isDense: true, errorText: _error),
+                  ),
+                const SizedBox(height: 12),
+                InkWell(
+                  onTap: _pickDate,
+                  child: InputDecorator(
+                    decoration: const InputDecoration(labelText: 'Tarih', isDense: true),
+                    child: Text(_dmy(_date)),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: _noteController,
+                  decoration: const InputDecoration(labelText: 'Not (opsiyonel)', isDense: true),
+                ),
+                if (_error != null) ...[
+                  const SizedBox(height: 6),
+                  Text(_error!, style: const TextStyle(color: AppColors.terracotta, fontSize: 12)),
+                ],
+              ],
+              const SizedBox(height: 16),
+              Row(
+                children: [
+                  Expanded(
+                    child: OutlinedButton(
+                      onPressed: _saving ? null : () => Navigator.of(context).pop(false),
+                      style: OutlinedButton.styleFrom(side: const BorderSide(color: AppColors.brown300, width: 2)),
+                      child: const Text('Vazgeç', style: TextStyle(color: AppColors.brown700)),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: ElevatedButton(
+                      onPressed: _selected == null || _saving ? null : _save,
+                      style: ElevatedButton.styleFrom(backgroundColor: AppColors.brown800),
+                      child: _saving
+                          ? const SizedBox(
+                              height: 16, width: 16, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                          : const Text('Kaydet'),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
     );
   }
 }

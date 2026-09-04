@@ -264,6 +264,73 @@ class KasaRepo {
     return (rows as List).map((r) => KasaReceipt.fromJson(r as Map<String, dynamic>)).toList();
   }
 
+  /// Kasap-only portion of each receipt's total, for receipts that mix a
+  /// Kasap item with something else in the same cart -- the receipt's own
+  /// `total` column is the *whole* fiş. Powers both the Hesap tab's per-fiş
+  /// amount and the "Kasap Tutarı" column on Son İşlemler/İptaller.
+  Future<Map<int, num>> getScopedSubtotalsForReceipts({
+    required List<int> receiptIds,
+    required List<String> barcodes,
+  }) async {
+    if (receiptIds.isEmpty || barcodes.isEmpty) return {};
+    final rows = await _client.rpc('kasa_receipt_scoped_subtotals', params: {
+      'p_receipt_ids': receiptIds,
+      'p_barcodes': barcodes,
+    }).timeout(const Duration(seconds: 15));
+    return {
+      for (final r in (rows as List)) (r['receipt_id'] as num).toInt(): (r['subtotal'] as num?) ?? 0,
+    };
+  }
+
+  // ---- Kasap "Hesap" (Ramazan's manual sales calculation) --------------
+
+  Future<List<KasapManualSale>> getManualSales({DateTime? from, DateTime? to}) async {
+    var q = _client.from('kasap_manual_sales').select();
+    if (from != null) q = q.gte('sale_date', _dateOnly(from));
+    if (to != null) q = q.lte('sale_date', _dateOnly(to));
+    final rows = await q.order('sale_date', ascending: false).timeout(const Duration(seconds: 10));
+    return (rows as List).map((r) => KasapManualSale.fromJson(r as Map<String, dynamic>)).toList();
+  }
+
+  Future<void> addManualSale({
+    required String barcode,
+    required String stockname,
+    required DateTime saleDate,
+    num? weight,
+    required num price,
+    String? note,
+    String? createdBy,
+  }) =>
+      _client.from('kasap_manual_sales').insert({
+        'barcode': barcode,
+        'stockname': stockname,
+        'sale_date': _dateOnly(saleDate),
+        'weight': weight,
+        'price': price,
+        'note': note,
+        'created_by': createdBy,
+      });
+
+  Future<void> deleteManualSale(String id) => _client.from('kasap_manual_sales').delete().eq('id', id);
+
+  /// Receipt ids currently excluded from the Hesap calculation -- excluding
+  /// a fiş there doesn't touch the receipt itself, it only hides it from
+  /// this specific total/list (see db/2026-09-04_kasap_hesap.sql).
+  Future<Set<int>> getExcludedReceiptIds() async {
+    final rows = await _client.from('kasap_hesap_excluded_receipts').select('receipt_id').timeout(const Duration(seconds: 10));
+    return {for (final r in (rows as List)) (r['receipt_id'] as num).toInt()};
+  }
+
+  Future<void> excludeReceiptFromHesap(int receiptId, {String? reason, String? excludedBy}) =>
+      _client.from('kasap_hesap_excluded_receipts').upsert({
+        'receipt_id': receiptId,
+        'reason': reason,
+        'excluded_by': excludedBy,
+      });
+
+  Future<void> includeReceiptInHesap(int receiptId) =>
+      _client.from('kasap_hesap_excluded_receipts').delete().eq('receipt_id', receiptId);
+
   /// Exact, unlimited receipt-level aggregates for [barcodes] over a date
   /// range -- Fiş/Nakit/Kart/İndirim/İptal for Kasap/Manav's Özet tab and
   /// the header line on their Son İşlemler/İptaller tabs. Deliberately not

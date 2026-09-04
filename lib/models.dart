@@ -843,6 +843,47 @@ class KasaPriceMismatch {
   bool get tillCheaper => diff < 0;
 }
 
+/// A hand-entered sale on Kasap's "Hesap" tab -- Ramazan (the contractor who
+/// settles up based on his own Kasap sales) adding one that isn't captured
+/// by the real POS data. [weight] is null for a unit-priced (ADET) item;
+/// present (kg) for a weight-priced one, where [price] = weight * the
+/// item's per-kg price at entry time.
+class KasapManualSale {
+  final String id;
+  final String barcode;
+  final String stockname;
+  final DateTime saleDate;
+  final num? weight;
+  final num price;
+  final String? note;
+  final String? createdBy;
+  final DateTime createdAt;
+
+  KasapManualSale({
+    required this.id,
+    required this.barcode,
+    required this.stockname,
+    required this.saleDate,
+    this.weight,
+    required this.price,
+    this.note,
+    this.createdBy,
+    required this.createdAt,
+  });
+
+  factory KasapManualSale.fromJson(Map<String, dynamic> j) => KasapManualSale(
+        id: j['id'] as String,
+        barcode: j['barcode'] as String,
+        stockname: j['stockname'] as String,
+        saleDate: DateTime.parse(j['sale_date'] as String),
+        weight: j['weight'] as num?,
+        price: j['price'] as num,
+        note: (j['note'] as String?)?.trim().isNotEmpty == true ? (j['note'] as String).trim() : null,
+        createdBy: j['created_by'] as String?,
+        createdAt: DateTime.parse(j['created_at'] as String),
+      );
+}
+
 /// A staff note bound to a till receipt (kasa_receipt_notes), keyed by
 /// `belge_id` so it shows wherever that receipt appears.
 class KasaReceiptNote {

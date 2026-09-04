@@ -299,7 +299,7 @@ class _HomeShellState extends State<HomeShell> with WidgetsBindingObserver {
         _idTerazi => const TeraziyeGonderScreen(),
         _idAyarlar => const SettingsScreen(),
         _idIstatistik => _isDesktop ? const IstatistikScreen() : const MobileIstatistikGate(),
-        _idKasap => ScopedStatsBody(title: 'Kasap', barcodesResolver: DataRepo().getKasapBarcodes),
+        _idKasap => ScopedStatsBody(title: 'Kasap', barcodesResolver: DataRepo().getKasapBarcodes, showHesap: true),
         _idManav => ScopedStatsBody(title: 'Manav', barcodesResolver: DataRepo().getManavBarcodes),
         _ => const MessagesScreen(),
       };
@@ -524,7 +524,8 @@ class _ScopedStatsScreen extends StatelessWidget {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(title: Text(title)),
-      body: SafeArea(child: ScopedStatsBody(title: title, barcodesResolver: barcodesResolver)),
+      body: SafeArea(
+          child: ScopedStatsBody(title: title, barcodesResolver: barcodesResolver, showHesap: title == 'Kasap')),
     );
   }
 }
