@@ -180,6 +180,21 @@ class DataRepo {
         .limit(200)
         .timeout(const Duration(seconds: 5));
     final products = rows.map((r) => Product.fromJson(r)).toList();
+    // Same prefix-priority ranking as searchProductsLocal's own ORDER BY
+    // (see local_db.dart) -- a name *starting with* the query ranks ahead
+    // of one that merely *contains* it, applied client-side here since
+    // PostgREST's .order() can't express a CASE expression the way a raw
+    // SQL ORDER BY can. Without this, mobile (which searches live-first,
+    // see searchProducts above) showed a visibly different, less relevant
+    // order than desktop for the exact same query.
+    if (normalized.isNotEmpty) {
+      int rank(Product p) => (p.searchKey ?? '').startsWith(normalized) ? 0 : 1;
+      products.sort((a, b) {
+        final r = rank(a).compareTo(rank(b));
+        if (r != 0) return r;
+        return a.stockname.compareTo(b.stockname);
+      });
+    }
     // Warm the local cache with whatever a live search just found, so the
     // fast local path above finds it next time.
     for (final p in products) {

@@ -1438,33 +1438,42 @@ class _ScopedReceiptsSectionState extends State<_ScopedReceiptsSection> {
     return ListView(
       padding: const EdgeInsets.fromLTRB(16, 14, 16, 24),
       children: [
-        Wrap(
-          spacing: 6,
-          runSpacing: 6,
-          crossAxisAlignment: WrapCrossAlignment.center,
+        Row(
+          crossAxisAlignment: CrossAxisAlignment.center,
           children: [
-            const Text('Son', style: TextStyle(color: AppColors.brown500, fontSize: 12.5)),
-            for (final d in const [7, 30, 90])
-              ChoiceChip(
-                label: Text('$d gün'),
-                selected: _days == d,
-                onSelected: (_) => _setDays(d),
-                selectedColor: AppColors.terracotta,
-                labelStyle: TextStyle(
-                    color: _days == d ? Colors.white : AppColors.brown700, fontWeight: FontWeight.w600, fontSize: 12),
-                backgroundColor: AppColors.brown100,
-              ),
-            ActionChip(
-              label: Text(_customRange == null ? 'Özel' : '${_dm(_customRange!.start)} - ${_dm(_customRange!.end)}'),
-              onPressed: _pickCustomRange,
-              backgroundColor: _customRange != null ? AppColors.terracotta : AppColors.brown100,
-              labelStyle: TextStyle(
-                color: _customRange != null ? Colors.white : AppColors.brown700,
-                fontWeight: FontWeight.w600,
-                fontSize: 12,
+            Expanded(
+              child: Wrap(
+                spacing: 6,
+                runSpacing: 6,
+                crossAxisAlignment: WrapCrossAlignment.center,
+                children: [
+                  const Text('Son', style: TextStyle(color: AppColors.brown500, fontSize: 12.5)),
+                  for (final d in const [7, 30, 90])
+                    ChoiceChip(
+                      label: Text('$d gün'),
+                      selected: _days == d,
+                      onSelected: (_) => _setDays(d),
+                      selectedColor: AppColors.terracotta,
+                      labelStyle: TextStyle(
+                          color: _days == d ? Colors.white : AppColors.brown700,
+                          fontWeight: FontWeight.w600,
+                          fontSize: 12),
+                      backgroundColor: AppColors.brown100,
+                    ),
+                  ActionChip(
+                    label:
+                        Text(_customRange == null ? 'Özel' : '${_dm(_customRange!.start)} - ${_dm(_customRange!.end)}'),
+                    onPressed: _pickCustomRange,
+                    backgroundColor: _customRange != null ? AppColors.terracotta : AppColors.brown100,
+                    labelStyle: TextStyle(
+                      color: _customRange != null ? Colors.white : AppColors.brown700,
+                      fontWeight: FontWeight.w600,
+                      fontSize: 12,
+                    ),
+                  ),
+                ],
               ),
             ),
-            const Spacer(),
             IconButton(
               onPressed: () => setState(() {
                 _future = _load();

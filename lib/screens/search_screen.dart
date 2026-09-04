@@ -440,7 +440,22 @@ class _SearchScreenState extends State<SearchScreen> {
         return KeyEventResult.handled;
       case LogicalKeyboardKey.enter:
       case LogicalKeyboardKey.numpadEnter:
-        if (_focusedIndex != null) _showQuickEditDialog(context, rows[_focusedIndex!]);
+        if (_focusedIndex != null) {
+          final index = _focusedIndex!;
+          // On save, move the table's own focus down to the next row --
+          // just select it, don't reopen the dialog on it -- so the next
+          // Enter press (on the table, not inside a dialog) is what opens
+          // it. Staying on the same row (or closing back to nothing
+          // focused) after saving would break the "type price, Enter,
+          // type price, Enter..." rhythm this dialog exists for.
+          _showQuickEditDialog(context, rows[index]).then((changed) {
+            if (!mounted || changed != true) return;
+            final newRows = _pagedResults;
+            if (newRows.isEmpty) return;
+            _moveFocus((index + 1).clamp(0, newRows.length - 1), newRows.length);
+            _tableFocusNode.requestFocus();
+          });
+        }
         return KeyEventResult.handled;
       default:
         return KeyEventResult.ignored;
