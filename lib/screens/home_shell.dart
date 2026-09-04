@@ -109,6 +109,11 @@ class _HomeShellState extends State<HomeShell> with WidgetsBindingObserver {
   // (default first, correct second) which would visibly swap out from under
   // whichever tab position the user happens to be sitting on.
   bool? _isRamazan;
+  // Mobile-only, same resolution pass as _isRamazan. Furkan/Ahmet keep the
+  // normal "İstatistik" nav slot, but tapping it asks which of Genel/Kasap/
+  // Manav they want (see _showIstatistikChoice) instead of landing on a
+  // fixed screen -- they're the only staff who need all three regularly.
+  bool? _isFurkanOrAhmet;
 
   // A phone or tablet gets the OS-native bottom tab bar; anything else
   // (Windows, and Linux/macOS if this is ever built for them) gets a
@@ -132,6 +137,54 @@ class _HomeShellState extends State<HomeShell> with WidgetsBindingObserver {
       if (_tabHistory.length > 20) _tabHistory.removeAt(0);
       _index = newIndex;
     });
+  }
+
+  // Mobile-only entry point for the İstatistik nav destination when the
+  // signed-in device belongs to Furkan or Ahmet -- everyone else (including
+  // Ramazan, who never sees this destination at all) goes straight through
+  // to _goToTab as normal.
+  void _handleNavTap(int index) {
+    if (!_isDesktop && _isFurkanOrAhmet == true && _tabOrder[index] == _idIstatistik) {
+      _showIstatistikChoice(index);
+      return;
+    }
+    _goToTab(index);
+  }
+
+  Future<void> _showIstatistikChoice(int istatistikIndex) async {
+    final choice = await showDialog<String>(
+      context: context,
+      builder: (dialogContext) => SimpleDialog(
+        title: const Text('Hangisini görüntülemek istersiniz?'),
+        children: [
+          SimpleDialogOption(
+            onPressed: () => Navigator.of(dialogContext).pop('genel'),
+            child: const Padding(padding: EdgeInsets.symmetric(vertical: 4), child: Text('Genel')),
+          ),
+          SimpleDialogOption(
+            onPressed: () => Navigator.of(dialogContext).pop('kasap'),
+            child: const Padding(padding: EdgeInsets.symmetric(vertical: 4), child: Text('Kasap')),
+          ),
+          SimpleDialogOption(
+            onPressed: () => Navigator.of(dialogContext).pop('manav'),
+            child: const Padding(padding: EdgeInsets.symmetric(vertical: 4), child: Text('Manav')),
+          ),
+        ],
+      ),
+    );
+    if (!mounted || choice == null) return;
+    switch (choice) {
+      case 'genel':
+        _goToTab(istatistikIndex);
+      case 'kasap':
+        Navigator.of(context).push(MaterialPageRoute(
+          builder: (_) => _ScopedStatsScreen(title: 'Kasap', barcodesResolver: _repo.getKasapBarcodes),
+        ));
+      case 'manav':
+        Navigator.of(context).push(MaterialPageRoute(
+          builder: (_) => _ScopedStatsScreen(title: 'Manav', barcodesResolver: _repo.getManavBarcodes),
+        ));
+    }
   }
 
   void _swipeForward() {
@@ -158,7 +211,10 @@ class _HomeShellState extends State<HomeShell> with WidgetsBindingObserver {
       _repo.getStaffName().then((name) {
         if (!mounted) return;
         final n = name?.trim().toLowerCase();
-        setState(() => _isRamazan = n == 'ramazan');
+        setState(() {
+          _isRamazan = n == 'ramazan';
+          _isFurkanOrAhmet = n == 'furkan' || n == 'ahmet';
+        });
       });
     }
     // Idempotent -- safe whether we arrived here via a fresh sign-in or a
@@ -391,7 +447,7 @@ class _HomeShellState extends State<HomeShell> with WidgetsBindingObserver {
           ? null
           : NavigationBar(
               selectedIndex: _index,
-              onDestinationSelected: _goToTab,
+              onDestinationSelected: _handleNavTap,
               backgroundColor: AppColors.brown900,
               indicatorColor: AppColors.terracotta,
               labelTextStyle: WidgetStateProperty.resolveWith(
@@ -449,6 +505,26 @@ class _HomeShellState extends State<HomeShell> with WidgetsBindingObserver {
                   ),
               ],
             ),
+    );
+  }
+}
+
+/// Standalone Kasap/Manav destination for Furkan/Ahmet on mobile, pushed on
+/// top of the nav stack rather than living in a fixed tab slot -- see
+/// _HomeShellState._showIstatistikChoice. Same ScopedStatsBody desktop uses
+/// for its own top-level Kasap/Manav sections, just wrapped in an ordinary
+/// Scaffold+AppBar here since this isn't sitting inside the shell's own
+/// chrome the way a regular tab destination would be.
+class _ScopedStatsScreen extends StatelessWidget {
+  final String title;
+  final Future<Set<String>> Function() barcodesResolver;
+  const _ScopedStatsScreen({required this.title, required this.barcodesResolver});
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: Text(title)),
+      body: SafeArea(child: ScopedStatsBody(title: title, barcodesResolver: barcodesResolver)),
     );
   }
 }

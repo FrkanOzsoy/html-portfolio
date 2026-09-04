@@ -3,7 +3,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../app_settings.dart';
-import '../data_repo.dart';
 import '../format.dart';
 import '../kasa_repo.dart';
 import '../models.dart';
@@ -113,12 +112,14 @@ class _MobileIstatistikGateState extends State<MobileIstatistikGate> {
 /// lib/kasa_repo.dart). Six sections, each with fully sortable tables:
 ///   Son İşlemler · Günlük Özet · İptaller · Fiyat Uyuşmazlığı ·
 ///   Z Raporları · Ürün Satışları
-/// Plus, on mobile only, two extra tabs (Kasap/Manav) for Furkan/Ahmet --
-/// see _IstatistikScreenState below, which resolves that before the
-/// TabController (fixed-length once built) is ever constructed. Desktop
-/// never shows them here: Kasap/Manav are their own top-level sections
-/// there instead (see home_shell.dart's _idKasap/_idManav, both dispatching
-/// to ScopedStatsBody).
+/// This is always the "Genel" destination now. Kasap/Manav are separate
+/// destinations everywhere -- desktop's own top-level sections
+/// (home_shell.dart's _idKasap/_idManav, dispatching to ScopedStatsBody),
+/// and on mobile a choice Furkan/Ahmet make in a popup before ever reaching
+/// here (see home_shell.dart's _showIstatistikChoice) rather than tabs
+/// bolted onto this screen -- they used to be, but that made "İstatistik"
+/// an 8-tab wall for exactly two staff members instead of three separate,
+/// focused screens.
 class IstatistikScreen extends StatefulWidget {
   const IstatistikScreen({super.key});
 
@@ -126,45 +127,9 @@ class IstatistikScreen extends StatefulWidget {
   State<IstatistikScreen> createState() => _IstatistikScreenState();
 }
 
-class _IstatistikScreenState extends State<IstatistikScreen> {
-  // Desktop: always false (Kasap/Manav live outside İstatistik there).
-  // Mobile: only Furkan/Ahmet -- resolved async off the device's own staff
-  // name, same pattern as MobileIstatistikGate's PIN check above.
-  bool? _showExtras;
-
-  @override
-  void initState() {
-    super.initState();
-    if (isDesktopPlatform) {
-      _showExtras = false;
-    } else {
-      DataRepo().getStaffName().then((name) {
-        final n = name?.trim().toLowerCase();
-        if (mounted) setState(() => _showExtras = n == 'furkan' || n == 'ahmet');
-      });
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    if (_showExtras == null) {
-      return const Center(child: CircularProgressIndicator());
-    }
-    return _IstatistikBody(showExtras: _showExtras!);
-  }
-}
-
-class _IstatistikBody extends StatefulWidget {
-  final bool showExtras;
-  const _IstatistikBody({required this.showExtras});
-
-  @override
-  State<_IstatistikBody> createState() => _IstatistikBodyState();
-}
-
-class _IstatistikBodyState extends State<_IstatistikBody> with SingleTickerProviderStateMixin {
+class _IstatistikScreenState extends State<IstatistikScreen> with SingleTickerProviderStateMixin {
   final _repo = KasaRepo();
-  late final TabController _tab = TabController(length: widget.showExtras ? 8 : 6, vsync: this);
+  late final TabController _tab;
 
   int _openMismatches = 0;
   StreamSubscription? _mismatchSub;
@@ -176,6 +141,7 @@ class _IstatistikBodyState extends State<_IstatistikBody> with SingleTickerProvi
   @override
   void initState() {
     super.initState();
+    _tab = TabController(length: 6, vsync: this);
     _mismatchSub = _repo.watchOpenMismatches().listen((rows) {
       if (mounted) setState(() => _openMismatches = rows.length);
     });
@@ -241,10 +207,6 @@ class _IstatistikBodyState extends State<_IstatistikBody> with SingleTickerProvi
                           ),
                           const Tab(text: 'Z Raporları'),
                           const Tab(text: 'Ürün Satışları'),
-                          if (widget.showExtras) ...[
-                            const Tab(text: 'Kasap'),
-                            const Tab(text: 'Manav'),
-                          ],
                         ],
                       ),
                     ),
@@ -275,14 +237,6 @@ class _IstatistikBodyState extends State<_IstatistikBody> with SingleTickerProvi
                 _MismatchSection(repo: _repo),
                 _ZReportsSection(repo: _repo),
                 _UrunSatislariSection(repo: _repo),
-                if (widget.showExtras) ...[
-                  KasapContent(repo: _repo, barcodesResolver: DataRepo().getKasapBarcodes),
-                  KasapContent(
-                    repo: _repo,
-                    barcodesResolver: DataRepo().getManavBarcodes,
-                    emptyMessage: 'Manav için barkod seti bulunamadı.',
-                  ),
-                ],
               ],
             ),
           ),
