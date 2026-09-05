@@ -37,6 +37,13 @@ class _HomeShellState extends State<HomeShell> with WidgetsBindingObserver {
   int _pendingCreatesCount = 0;
   int get _kasayaQueueCount => _pendingChangesCount + _pendingCreatesCount;
   DateTime? _lastUpdateCheck;
+  StreamSubscription? _notificationTapSub;
+  // Bumped (with a matching Key change on the Kasap ScopedStatsBody, since
+  // IndexedStack keeps that State alive across rebuilds) whenever a tapped
+  // "kasap_sale" push notification should force it open on the Hesap tab --
+  // see _handleNotificationTap.
+  int _kasapDeepLinkVersion = 0;
+  int _kasapInitialTab = 0;
 
   // Canonical screen ids -- fixed regardless of platform. What changes
   // per-platform is the *display order* (see _tabOrder), so _index below is
@@ -231,6 +238,11 @@ class _HomeShellState extends State<HomeShell> with WidgetsBindingObserver {
     _pendingCreatesSub = _repo.watchAllPendingCreates().listen((entries) {
       if (mounted) setState(() => _pendingCreatesCount = entries.length);
     });
+    _notificationTapSub = PushService.instance.onNotificationTap.listen(_handleNotificationTap);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      final pending = PushService.instance.consumePendingInitialTap();
+      if (pending != null) _handleNotificationTap(pending);
+    });
   }
 
   @override
@@ -238,7 +250,25 @@ class _HomeShellState extends State<HomeShell> with WidgetsBindingObserver {
     WidgetsBinding.instance.removeObserver(this);
     _pendingChangesSub?.cancel();
     _pendingCreatesSub?.cancel();
+    _notificationTapSub?.cancel();
     super.dispose();
+  }
+
+  // Tapping a "kasap_sale" push (see kasap_sale_push_tg / kasap-sale-push,
+  // sent to Ramazan only) should land straight on Kasap's "Hesap" tab
+  // (index 4 of ScopedStatsBody's TabController -- Özet/Son İşlemler/
+  // İptaller/Ürün Satışları/Hesap) rather than wherever the user happened
+  // to be.
+  void _handleNotificationTap(Map<String, dynamic> data) {
+    if (data['type'] != 'kasap_sale') return;
+    final pos = _tabOrder.indexOf(_idKasap);
+    if (pos < 0 || !mounted) return;
+    setState(() {
+      _kasapInitialTab = 4;
+      _kasapDeepLinkVersion++;
+      _tabHistory.add(_index);
+      _index = pos;
+    });
   }
 
   @override
@@ -299,7 +329,13 @@ class _HomeShellState extends State<HomeShell> with WidgetsBindingObserver {
         _idTerazi => const TeraziyeGonderScreen(),
         _idAyarlar => const SettingsScreen(),
         _idIstatistik => _isDesktop ? const IstatistikScreen() : const MobileIstatistikGate(),
-        _idKasap => ScopedStatsBody(title: 'Kasap', barcodesResolver: DataRepo().getKasapBarcodes, showHesap: true),
+        _idKasap => ScopedStatsBody(
+            key: ValueKey('kasap-$_kasapDeepLinkVersion'),
+            title: 'Kasap',
+            barcodesResolver: DataRepo().getKasapBarcodes,
+            showHesap: true,
+            initialTabIndex: _kasapInitialTab,
+          ),
         _idManav => ScopedStatsBody(title: 'Manav', barcodesResolver: DataRepo().getManavBarcodes),
         _ => const MessagesScreen(),
       };

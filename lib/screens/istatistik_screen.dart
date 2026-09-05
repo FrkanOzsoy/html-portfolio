@@ -1881,11 +1881,17 @@ class ScopedStatsBody extends StatefulWidget {
   /// calculation, see kasap_screen.dart's HesapSection). Manav never gets
   /// this; it's specific to Ramazan settling up on his own Kasap sales.
   final bool showHesap;
+  /// Which tab to open on first build -- used by HomeShell to deep-link
+  /// straight to Hesap from a tapped "kasap_sale" push notification. Only
+  /// takes effect via initState, so a caller that wants to re-apply it on
+  /// an already-mounted instance must also give this widget a new Key.
+  final int? initialTabIndex;
   const ScopedStatsBody({
     super.key,
     required this.title,
     required this.barcodesResolver,
     this.showHesap = false,
+    this.initialTabIndex,
   });
 
   @override
@@ -1894,7 +1900,11 @@ class ScopedStatsBody extends StatefulWidget {
 
 class _ScopedStatsBodyState extends State<ScopedStatsBody> with SingleTickerProviderStateMixin {
   final _repo = KasaRepo();
-  late final TabController _tab = TabController(length: widget.showHesap ? 5 : 4, vsync: this);
+  late final TabController _tab = TabController(
+    length: widget.showHesap ? 5 : 4,
+    vsync: this,
+    initialIndex: (widget.initialTabIndex ?? 0).clamp(0, (widget.showHesap ? 5 : 4) - 1),
+  );
   Set<String>? _barcodes;
   Map<String, KasaReceiptNote> _notes = const {};
   StreamSubscription? _notesSub;

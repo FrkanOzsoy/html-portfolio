@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
@@ -25,6 +26,23 @@ class PushService {
 
   bool get _supported => !kIsWeb && Platform.isAndroid;
 
+  // Notification-tap routing (currently only "kasap_sale", see
+  // home_shell.dart's _handleNotificationTap) -- a warm/background tap comes
+  // through [onNotificationTap] live; a cold-start tap (app was killed) is
+  // instead captured once here and handed to whoever calls
+  // [consumePendingInitialTap] after the widget tree is up, since a
+  // broadcast stream would otherwise drop an event emitted before HomeShell
+  // has a chance to subscribe.
+  final _tapController = StreamController<Map<String, dynamic>>.broadcast();
+  Stream<Map<String, dynamic>> get onNotificationTap => _tapController.stream;
+  Map<String, dynamic>? _pendingInitialTap;
+
+  Map<String, dynamic>? consumePendingInitialTap() {
+    final data = _pendingInitialTap;
+    _pendingInitialTap = null;
+    return data;
+  }
+
   /// One-time Firebase + FCM setup. Safe to call before login (registration
   /// will just be retried later via [syncToken]).
   Future<void> init() async {
@@ -41,6 +59,9 @@ class PushService {
         _register(t);
       });
       await syncToken();
+      FirebaseMessaging.onMessageOpenedApp.listen((m) => _tapController.add(m.data));
+      final initialMessage = await fm.getInitialMessage();
+      if (initialMessage != null) _pendingInitialTap = initialMessage.data;
     } catch (e) {
       debugPrint('PushService init failed (non-fatal): $e');
     }
